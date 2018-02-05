@@ -1,0 +1,7 @@
+Make a file access heatmap
+	probably track  folder/node hits for N-levels deep
+		3 levels would be everything in C:/, C:/*, and C:/*/*
+Create [something] that monitors file reads 
+	Injecting something into processes on the computer?
+		I don't like that idea. It seems really hacky
+	I guess I'll just work on manual mode for now

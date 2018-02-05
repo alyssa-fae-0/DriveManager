@@ -3,13 +3,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include "fae_lib.h"
-#include <stdint.h>
-
-#define null NULL
-#define u32 DWORD
-#define Handle HINSTANCE
-#define win_string LPCSTR
-#define u64 uint64_t
 
 void print_filetime_key()
 {
@@ -23,10 +16,11 @@ void print_filetime(FILETIME *ft, const char *identifier)
 	printf("%04i_%02i_%02i  %02i:%02i:%02i  %s\n", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, identifier);
 	}
 
-int main(int argc, char *argv[])
+void scan_files() 
 {
-	u32 drives = GetLogicalDrives();
-	for (u32 i = 0; i < 26; i++)
+	// Get all connected drives
+	DWORD drives = GetLogicalDrives();
+	for (DWORD i = 0; i < 26; i++)
 	{
 		char drive_letter = (char)(i + 'A');
 		if ((drives >> i) & 1)
@@ -35,34 +29,7 @@ int main(int argc, char *argv[])
 		//	printf("Drive %c: Not Detected\n", drive_letter);
 	}
 
-	WIN32_FIND_DATAA file_data;
-	HANDLE file_handle;
-	
-	file_handle = FindFirstFile("C:/nonexistent_file", &file_data);
-	if (file_handle == INVALID_HANDLE_VALUE)
-	{
-		// file not found
-		printf("File not found\n");
-	}
-
-	file_handle = FindFirstFile("C:\\dev\\projects\\DriveManager\\DriveManager.sln", &file_data);
-	if (file_handle == INVALID_HANDLE_VALUE)
-	{
-		// file not found
-		printf("File not found\n");
-	}
-	else
-	{
-		// file found
-		printf("\nFile: %s\n", file_data.cFileName);
-		print_filetime_key();
-		print_filetime(&file_data.ftCreationTime, "Created");
-		print_filetime(&file_data.ftLastAccessTime, "Last Accessed");
-		print_filetime(&file_data.ftLastWriteTime, "Last Write");
-		printf("\n");
-	}
-
-
+	// calculate last_access threshold
 	printf("\n");
 	print_filetime_key();
 
@@ -72,7 +39,7 @@ int main(int argc, char *argv[])
 		print_filetime(&access_time_threshold, "Current Time");
 
 		const u64 hundred_nanoseconds_per_day = 864000000000;
-		u64 one_month_in_hundred_nanoseconds =  30 * hundred_nanoseconds_per_day;
+		u64 one_month_in_hundred_nanoseconds = 30 * hundred_nanoseconds_per_day;
 
 		ULARGE_INTEGER uli_att;
 		uli_att.HighPart = access_time_threshold.dwHighDateTime;
@@ -92,15 +59,66 @@ int main(int argc, char *argv[])
 		FILETIME last_access;
 		u64 size;
 	};
+}
 
-	long long unsigned int num_files = 0;
-	sizeof(num_files);
-
+int main(int argc, char *argv[])
+{
+	WIN32_FIND_DATAA file_data;
+	HANDLE file_handle;
 	
+	file_handle = FindFirstFile("C:/nonexistent_file", &file_data);
+	if (file_handle == INVALID_HANDLE_VALUE)
+	{
+		// file not found
+		printf("File not found\n");
+	}
 
+	file_handle = FindFirstFile("C:\\dev\\test_data\\test_a.txt", &file_data);
+	if (file_handle == INVALID_HANDLE_VALUE)
+	{
+		// file not found
+		printf("File not found\n");
+	}
+	else
+	{
+		// file found
+		printf("\nFile: %s\n", file_data.cFileName);
+		print_filetime_key();
+		print_filetime(&file_data.ftCreationTime, "Created");
+		print_filetime(&file_data.ftLastAccessTime, "Last Accessed");
+		print_filetime(&file_data.ftLastWriteTime, "Last Write");
 
+		u64 size = (((u64)file_data.nFileSizeHigh) * (((u64)MAXDWORD) + 1)) + ((u64)file_data.nFileSizeLow);
+		printf("Size: %I64i Bytes\n", size);
+		printf("Size: %I64i KB\n", size / 1000);
+		printf("\n");
+	}
 
+	const char *test_data_directory = "C:/dev/test_data/";
+	const int str_length = 80;
+	char tmpstr[str_length];
 
+	strcpy_s(tmpstr, str_length, test_data_directory);
+	strcat_s(tmpstr, str_length, "bakup");
+
+	file_handle = FindFirstFile(tmpstr, &file_data);
+	if (file_handle != INVALID_HANDLE_VALUE)
+	{
+		printf("backup directory already exists\n");
+	}
+	else
+	{
+		// create the directory
+		bool success = CreateDirectory(tmpstr, null);
+		if (success)
+		{
+			printf("directory created\n");
+		}
+		else
+		{
+			printf("failed to create directory\n");
+		}
+	}
 
 
 	system("PAUSE");
