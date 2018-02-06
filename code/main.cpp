@@ -4,17 +4,51 @@
 #include <windows.h>
 #include "fae_lib.h"
 
+#include <string>
+#include <iostream>
+
+using std::string;
+using std::cout;
+using std::endl;
+using std::cin;
+
+
 void print_filetime_key()
 {
 	printf("YYYY_MM_DD  HH:MM:SS  Name\n");
 }
 
 void print_filetime(FILETIME *ft, const char *identifier)
-	{
+{
 	SYSTEMTIME st;
 	FileTimeToSystemTime(ft, &st);
 	printf("%04i_%02i_%02i  %02i:%02i:%02i  %s\n", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, identifier);
+}
+
+bool create_directory_if_not_exists(string &directory) 
+{
+	WIN32_FIND_DATA file_data;
+	HANDLE file_handle = FindFirstFile(directory.c_str(), &file_data);
+	if (file_handle != INVALID_HANDLE_VALUE)
+	{
+		cout << "Directory '" << directory << "' already exists." << endl;
+		return true;
 	}
+	else
+	{
+		// create the directory
+		if (CreateDirectory(directory.c_str(), null))
+		{
+			cout << "Directory '" << directory << "' created." << endl;
+			return true;
+		}
+		else
+		{
+			cout << "Directory '" << directory << "' failed to create." << endl;
+			return false;
+		}
+	}
+}
 
 void scan_files() 
 {
@@ -63,6 +97,13 @@ void scan_files()
 
 int main(int argc, char *argv[])
 {
+	SYSTEM_INFO system_info;
+	GetSystemInfo(&system_info);
+
+	char *memory_page = (char*)VirtualAlloc(null, system_info.dwPageSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+	printf("Page addr: 0x%x Page size: %i bytes\n", (unsigned int)memory_page, system_info.dwPageSize);
+	char *free_memory_start = memory_page;
+
 	WIN32_FIND_DATAA file_data;
 	HANDLE file_handle;
 	
@@ -94,33 +135,50 @@ int main(int argc, char *argv[])
 		printf("\n");
 	}
 
-	const char *test_data_directory = "C:/dev/test_data/";
-	const int str_length = 80;
-	char tmpstr[str_length];
+	string test_data_directory = string("C:/dev/test_data/");
+	string backup_directory = test_data_directory + "backup";
 
-	strcpy_s(tmpstr, str_length, test_data_directory);
-	strcat_s(tmpstr, str_length, "bakup");
+	create_directory_if_not_exists(backup_directory);
 
-	file_handle = FindFirstFile(tmpstr, &file_data);
-	if (file_handle != INVALID_HANDLE_VALUE)
+	string old_file_name = test_data_directory + "test_a.txt";
+	string new_file_name = backup_directory + "/test_a.txt";
+
+	if (CopyFile(old_file_name.c_str(), new_file_name.c_str(), true))
 	{
-		printf("backup directory already exists\n");
+		cout << "Successfully copied '" << old_file_name << "' to '" << new_file_name << "'" << endl;
 	}
 	else
 	{
-		// create the directory
-		bool success = CreateDirectory(tmpstr, null);
-		if (success)
+		cout << "Failed to copy '" << old_file_name << "' to '" << backup_directory << "'" << endl;
+		DWORD error = GetLastError();
+		switch (error)
 		{
-			printf("directory created\n");
-		}
-		else
-		{
-			printf("failed to create directory\n");
+		case ERROR_FILE_NOT_FOUND:
+			cout << old_file_name << " not found." << endl;
+			break;
+		case ERROR_FILE_EXISTS:
+			cout  << new_file_name << " already exists." << endl;
 		}
 	}
 
+	string symlink_directory = test_data_directory + "symlinks";
+	create_directory_if_not_exists(symlink_directory);
 
+	string symlink_file_name = symlink_directory + "/test_a.txt";
+
+	if (CreateSymbolicLink(symlink_file_name.c_str(), old_file_name.c_str(), 0) != 0)
+	{
+		cout << "symlink successfully created" << endl;
+	}
+	else
+	{
+		cout << "failed to create symlink" << endl;
+		DWORD error = GetLastError();
+		cout << "Error Code: " << error << endl;
+		//ERROR_SYMLINK_NOT_SUPPORTED
+	}
+
+	cout << endl;
 	system("PAUSE");
 	return 0;
 }
