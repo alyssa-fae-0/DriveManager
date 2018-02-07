@@ -95,6 +95,68 @@ void scan_files()
 	};
 }
 
+bool copy_file(string &from, string &to)
+{
+	if (CopyFile(from.c_str(), to.c_str(), true))
+	{
+		cout << "Successfully copied '" << from << "' to '" << to << "'" << endl;
+		return true;
+	}
+	else
+	{
+		cout << "Failed to copy '" << from << "' to '" << to << "'" << endl;
+		DWORD error = GetLastError();
+		switch (error)
+		{
+		case ERROR_FILE_NOT_FOUND:
+			cout << from << " not found." << endl;
+			break;
+		case ERROR_FILE_EXISTS:
+			cout << to << " already exists." << endl;
+			//TODO: check if the file is the same
+			break;
+		}
+		return false;
+	}
+}
+
+bool contains(const char *str, const char *target)
+{
+	int str_length = strlen(str);
+	int tar_length = strlen(target);
+	if (tar_length > str_length)
+		return false;
+	for (int i = 0; i < str_length; i++)
+	{
+		// found the start of the target
+		if (str[i] == target[0])
+		{
+			bool matching = true;
+			for (int substring_letter = 0; 
+				matching &&
+				substring_letter < str_length && 
+				substring_letter < tar_length; 
+				substring_letter++)
+			{
+				//current letters match
+				if (str[i + substring_letter] == target[substring_letter])
+				{
+					// current match is final letter, so we're done
+					if (substring_letter == tar_length - 1)
+					{
+						return true;
+					}
+				}
+				else
+				{
+					matching = false;
+				}
+			}
+		}
+	}
+	return false;
+}
+
 int main(int argc, char *argv[])
 {
 	SYSTEM_INFO system_info;
@@ -143,23 +205,7 @@ int main(int argc, char *argv[])
 	string old_file_name = test_data_directory + "test_a.txt";
 	string new_file_name = backup_directory + "/test_a.txt";
 
-	if (CopyFile(old_file_name.c_str(), new_file_name.c_str(), true))
-	{
-		cout << "Successfully copied '" << old_file_name << "' to '" << new_file_name << "'" << endl;
-	}
-	else
-	{
-		cout << "Failed to copy '" << old_file_name << "' to '" << backup_directory << "'" << endl;
-		DWORD error = GetLastError();
-		switch (error)
-		{
-		case ERROR_FILE_NOT_FOUND:
-			cout << old_file_name << " not found." << endl;
-			break;
-		case ERROR_FILE_EXISTS:
-			cout  << new_file_name << " already exists." << endl;
-		}
-	}
+	copy_file(old_file_name, new_file_name);
 
 	string symlink_directory = test_data_directory + "symlinks";
 	create_directory_if_not_exists(symlink_directory);
@@ -174,8 +220,61 @@ int main(int argc, char *argv[])
 	{
 		cout << "failed to create symlink" << endl;
 		DWORD error = GetLastError();
-		cout << "Error Code: " << error << endl;
-		//ERROR_SYMLINK_NOT_SUPPORTED
+		if (error == ERROR_PRIVILEGE_NOT_HELD)
+		{
+			cout << "  If you're not running as Administrator, this won't work." << endl;
+			cout << "  If you're debugging this, you need to run VS as administrator." << endl;
+			cout << "  This means you, Alyssa." << endl;
+		}
+		else if (error == ERROR_ALREADY_EXISTS)
+		{
+			cout << "  symlink already exists." << endl;
+		}
+		else
+		{
+			cout << "  Unknown Error Code: " << error << endl;
+		}
+	}
+
+	{
+		cout << endl << endl;
+		cout << "Copying .txt files to /backkup" << endl;
+		if (SetCurrentDirectory(test_data_directory.c_str()))
+		{
+			const int MAX_FILES_TO_SCAN = 50;
+
+			// directory set
+			cout << "Directory changed to:" << endl << '\t' << test_data_directory << endl;
+
+			WIN32_FIND_DATA data;
+			HANDLE handle;
+			handle = FindFirstFile("*", &data);
+			if (handle != INVALID_HANDLE_VALUE)
+			{
+				int results = 0;
+				string found_file_name = string();
+				string new_file_name = string();
+				do {
+					found_file_name = data.cFileName;
+					cout << "Found: '" << found_file_name << "'" << endl;
+					if (contains(data.cFileName, ".txt"))
+					{
+						cout << found_file_name << " IS a candidate" << endl;
+						new_file_name = backup_directory + "/" + found_file_name;
+						copy_file(found_file_name, new_file_name);
+					}
+					cout << endl;
+
+
+				} while (FindNextFile(handle, &data) && results++ < MAX_FILES_TO_SCAN);
+			}
+			else
+			{
+				cout << "Didn't find '*'?" << endl;
+			}
+		}
+		else
+			cout << "Failed to change directory to: " << endl << '\t' << test_data_directory << endl;
 	}
 
 	cout << endl;
