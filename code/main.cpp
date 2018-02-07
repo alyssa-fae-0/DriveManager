@@ -6,6 +6,7 @@
 
 #include <string>
 #include <iostream>
+#include <locale>
 
 using std::string;
 using std::cout;
@@ -224,10 +225,99 @@ void delete_files_in_directory(string &directory_name)
 	}
 }
 
+//u64 get_size_of_file(HANDLE file_handle) 
+//{
+//	LARGE_INTEGER file_size;
+//	bool result = GetFileSizeEx(file_handle, &file_size);
+//	if (!result)
+//	{
+//		cout << "Error getting the size of file" << endl;
+//		cout << "Error: " << GetLastError() << endl;
+//		return -1;
+//	}
+//	return (u64)file_size.QuadPart;
+//}
+
+bool starts_with_drive(const char* directory)
+{
+	int str_len = strlen(directory);
+	if (str_len < 3)
+		return false; // string isn't long enough to fit "X:/"
+
+	char letter = directory[0];
+	if (!(letter >= 'A' && letter <= 'Z') && !(letter >= 'a' && letter <= 'z'))
+		return false; // first char must be identifier "A, C, z, etc"
+
+	letter = directory[1];
+	if (letter != ':')
+		return false; // second char must be a colon
+
+	letter = directory[2];
+	if (letter != '/' && letter != '\\')
+		return false; // third char must be a slash (backslash or forwardslash)
+	return true;
+}
+
+bool starts_with_drive(string &directory)
+{
+	if (directory.length() < 3)
+		return 0;
+
+	char letter = directory[0];
+	if (!(letter >= 'A' && letter <= 'Z') && !(letter >= 'a' && letter <= 'z'))
+		return false; // first char must be identifier "A, C, z, etc"
+
+	letter = directory[1];
+	if (letter != ':')
+		return false; // second char must be a colon
+
+	letter = directory[2];
+	if (letter != '/' && letter != '\\')
+		return false; // third char must be a slash (backslash or forwardslash)
+	return true;
+}
+
+u64 get_freespace_for(const char* directory)
+{
+	// get the amount of free space on the drive of a given path
+	DWORD sectors_per_cluster, bytes_per_sector, number_of_free_sectors, total_number_of_clusters;
+	char drive_name[4];
+	strncpy_s(drive_name, 4, directory, 3);
+	drive_name[3] = 0;
+	GetDiskFreeSpace(drive_name, &sectors_per_cluster, &bytes_per_sector, &number_of_free_sectors, &total_number_of_clusters);
+
+	//cout << "Drive name: " << drive_name << endl;
+	//cout << "Sectors Per Cluster: " << sectors_per_cluster << endl;
+	//cout << "Bytes Per Sefctor:" << bytes_per_sector << endl;
+	//cout << "Number of Free Sectors: " << number_of_free_sectors << endl;
+	//cout << "Total Number of Clusters: " << total_number_of_clusters << endl;
+	//cout << endl;
+
+	return (u64)number_of_free_sectors * (u64)bytes_per_sector;
+	//u64 free_space_bytes = (u64)number_of_free_sectors * (u64)bytes_per_sector;
+	//u64 total_space_bytes = (u64)total_number_of_clusters * (u64)sectors_per_cluster * (u64)bytes_per_sector;
+
+	//cout << "Free space: " << free_space_bytes << "B -> " << free_space_bytes / 1000 << "KB -> " << free_space_bytes / (1000 * 1000) <<
+	//	"MB -> " << (double)(free_space_bytes / (1000 * 1000)) / 1000.0 << "GB" << endl;
+	//return free_space_bytes;
+}
+
 bool relocate_file(const char* file_name, string &from, string &to)
 {
 	string file = from + "/" + file_name;
 	string new_file = to + "/" + file_name;
+
+	u64 freespace_on_drive_from = get_freespace_for(from.c_str());
+	u64 freespace_on_drive_to   = get_freespace_for(to.c_str());
+
+	WIN32_FIND_DATA file_data;
+	HANDLE file_handle = FindFirstFile(file.c_str(), &file_data);
+
+	LARGE_INTEGER li_file_size;
+	li_file_size.HighPart = file_data.nFileSizeHigh;
+	li_file_size.LowPart = file_data.nFileSizeLow;
+	u64 file_size = (u64)li_file_size.QuadPart;
+
 
 	// copy file to new directory
 	file_operation_result result = copy_file(file, new_file);
@@ -239,14 +329,49 @@ bool relocate_file(const char* file_name, string &from, string &to)
 
 		// create symlink
 		if (!CreateSymbolicLink(file.c_str(), new_file.c_str(), 0))
+		{
+			for(int i = 0; i < 30; i++)
+				cout << "HEY! RUN VISUAL STUDIO IN ADMINISTRATOR MODE, YA GOOF!" << endl;
 			return false;
+		}
 		return true;
 	}
 	return false;
 }
 
+
+
+//string old_file_name = test_data_directory + "test_a.txt";
+//string symlink_file_name = symlink_directory + "/test_a.txt";
+
+/*if (CreateSymbolicLink(symlink_file_name.c_str(), old_file_name.c_str(), 0) != 0)
+{
+cout << "symlink successfully created" << endl;
+}
+else
+{
+cout << "failed to create symlink" << endl;
+DWORD error = GetLastError();
+if (error == ERROR_PRIVILEGE_NOT_HELD)
+{
+cout << "  If you're not running as Administrator, this won't work." << endl;
+cout << "  If you're debugging this, you need to run VS as administrator." << endl;
+cout << "  This means you, Alyssa." << endl;
+}
+else if (error == ERROR_ALREADY_EXISTS)
+{
+cout << "  symlink already exists." << endl;
+}
+else
+{
+cout << "  Unknown Error Code: " << error << endl;
+}
+}*/
+
 int main(int argc, char *argv[])
 {
+	cout.imbue(std::locale(""));
+
 	SYSTEM_INFO system_info;
 	GetSystemInfo(&system_info);
 
@@ -295,13 +420,13 @@ int main(int argc, char *argv[])
 		cout << "creating directories" << endl;
 		create_directory(backup_directory);
 		create_directory(symlink_directory);
-		system("PAUSE");
+		//system("PAUSE");
 
 		// delete all the files out of the directories
 		cout << "emptying directories" << endl;
 		delete_files_in_directory(backup_directory);
 		delete_files_in_directory(symlink_directory);
-		system("PAUSE");
+		//system("PAUSE");
 
 		// copy files to backup
 		{
@@ -342,11 +467,10 @@ int main(int argc, char *argv[])
 			}
 			else
 				cout << "Failed to change directory to: " << endl << '\t' << test_data_directory << endl;
-			system("PAUSE");
+			//system("PAUSE");
 		}
 
 		// relocate file
-		//transa
 		bool result = relocate_file("test_e.txt", backup_directory, symlink_directory);
 		if (result)
 			cout << "successfully relocated file from '" << backup_directory << "' to '" << symlink_directory << "'" << endl;
@@ -355,34 +479,5 @@ int main(int argc, char *argv[])
 	}
 
 	system("PAUSE");
-
-
-	//string old_file_name = test_data_directory + "test_a.txt";
-	//string symlink_file_name = symlink_directory + "/test_a.txt";
-
-	/*if (CreateSymbolicLink(symlink_file_name.c_str(), old_file_name.c_str(), 0) != 0)
-	{
-		cout << "symlink successfully created" << endl;
-	}
-	else
-	{
-		cout << "failed to create symlink" << endl;
-		DWORD error = GetLastError();
-		if (error == ERROR_PRIVILEGE_NOT_HELD)
-		{
-			cout << "  If you're not running as Administrator, this won't work." << endl;
-			cout << "  If you're debugging this, you need to run VS as administrator." << endl;
-			cout << "  This means you, Alyssa." << endl;
-		}
-		else if (error == ERROR_ALREADY_EXISTS)
-		{
-			cout << "  symlink already exists." << endl;
-		}
-		else
-		{
-			cout << "  Unknown Error Code: " << error << endl;
-		}
-	}*/
-
 	return 0;
 }
