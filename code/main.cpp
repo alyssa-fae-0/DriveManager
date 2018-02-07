@@ -25,29 +25,51 @@ void print_filetime(FILETIME *ft, const char *identifier)
 	printf("%04i_%02i_%02i  %02i:%02i:%02i  %s\n", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, identifier);
 }
 
-bool create_directory_if_not_exists(string &directory) 
+//enum creation_directive 
+//{
+//	cd_succeed_if_exists = 0,
+//	cd_fail_if_exists,
+//	cd_fail_if_different,
+//	cd_replace_if_exist,
+//	cd_replace_if_newer
+//};
+//
+//bool create_directory(string &path, creation_directive cd) 
+//{
+//	if (cd == cd_succeed_if_exists)
+//	{
+//
+//	}
+//}
+
+enum creation_result
+{
+	cr_created,
+	cr_existed,
+	cr_failed
+};
+
+creation_result create_directory(string &directory_path) 
 {
 	WIN32_FIND_DATA file_data;
-	HANDLE file_handle = FindFirstFile(directory.c_str(), &file_data);
+	HANDLE file_handle = FindFirstFile(directory_path.c_str(), &file_data);
+
+	// check for the directory
 	if (file_handle != INVALID_HANDLE_VALUE)
 	{
-		cout << "Directory '" << directory << "' already exists." << endl;
-		return true;
+		//cout << "Directory '" << directory_path << "' already exists." << endl;
+		return cr_existed;
 	}
-	else
+
+	// create the directory
+	if (CreateDirectory(directory_path.c_str(), null))
 	{
-		// create the directory
-		if (CreateDirectory(directory.c_str(), null))
-		{
-			cout << "Directory '" << directory << "' created." << endl;
-			return true;
-		}
-		else
-		{
-			cout << "Directory '" << directory << "' failed to create." << endl;
-			return false;
-		}
+		//cout << "Directory '" << directory_path << "' created." << endl;
+		return cr_created;
 	}
+
+	//cout << "Directory '" << directory_path << "' failed to create." << endl;
+	return cr_failed;
 }
 
 void scan_files() 
@@ -95,12 +117,19 @@ void scan_files()
 	};
 }
 
-bool copy_file(string &from, string &to)
+enum file_operation_result
+{
+	for_copied,
+	for_existed,
+	for_failed
+};
+
+file_operation_result copy_file(string &from, string &to)
 {
 	if (CopyFile(from.c_str(), to.c_str(), true))
 	{
 		cout << "Successfully copied '" << from << "' to '" << to << "'" << endl;
-		return true;
+		return for_copied;
 	}
 	else
 	{
@@ -110,13 +139,14 @@ bool copy_file(string &from, string &to)
 		{
 		case ERROR_FILE_NOT_FOUND:
 			cout << from << " not found." << endl;
-			break;
+			return for_failed;
+
 		case ERROR_FILE_EXISTS:
 			cout << to << " already exists." << endl;
 			//TODO: check if the file is the same
-			break;
+			return for_existed;
 		}
-		return false;
+		return for_failed;
 	}
 }
 
@@ -153,6 +183,64 @@ bool contains(const char *str, const char *target)
 				}
 			}
 		}
+	}
+	return false;
+}
+
+bool matches(const char* a, const char* b)
+{
+	int a_len = strlen(a);
+	int b_len = strlen(b);
+	if (a_len != b_len)
+		return false;
+	for (int i = 0; i < a_len; i++)
+	{
+		if (a[i] != b[i])
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+// delete all files in the directory
+void delete_files_in_directory(string &directory_name)
+{
+	WIN32_FIND_DATA find_data;
+	HANDLE handle = FindFirstFile(directory_name.c_str(), &find_data);
+	if (handle != INVALID_HANDLE_VALUE)
+	{
+		// backup folder exists
+		SetCurrentDirectory(directory_name.c_str());
+		handle = FindFirstFile("*", &find_data);
+
+		do {
+			if (!matches(find_data.cFileName, ".") && !matches(find_data.cFileName, ".."))
+			{
+				DeleteFile(find_data.cFileName);
+			}
+		} while (FindNextFile(handle, &find_data));
+		//RemoveDirectory(directory_name.c_str());
+	}
+}
+
+bool relocate_file(const char* file_name, string &from, string &to)
+{
+	string file = from + "/" + file_name;
+	string new_file = to + "/" + file_name;
+
+	// copy file to new directory
+	file_operation_result result = copy_file(file, new_file);
+	if (result == for_copied)
+	{
+		// delete old copy of file
+		if (!DeleteFile(file.c_str()))
+			return false;
+
+		// create symlink
+		if (!CreateSymbolicLink(file.c_str(), new_file.c_str(), 0))
+			return false;
+		return true;
 	}
 	return false;
 }
@@ -199,20 +287,80 @@ int main(int argc, char *argv[])
 
 	string test_data_directory = string("C:/dev/test_data/");
 	string backup_directory = test_data_directory + "backup";
-
-	create_directory_if_not_exists(backup_directory);
-
-	string old_file_name = test_data_directory + "test_a.txt";
-	string new_file_name = backup_directory + "/test_a.txt";
-
-	copy_file(old_file_name, new_file_name);
-
 	string symlink_directory = test_data_directory + "symlinks";
-	create_directory_if_not_exists(symlink_directory);
 
-	string symlink_file_name = symlink_directory + "/test_a.txt";
+	// setup test
+	{
+		// create directories if they don't exist
+		cout << "creating directories" << endl;
+		create_directory(backup_directory);
+		create_directory(symlink_directory);
+		system("PAUSE");
 
-	if (CreateSymbolicLink(symlink_file_name.c_str(), old_file_name.c_str(), 0) != 0)
+		// delete all the files out of the directories
+		cout << "emptying directories" << endl;
+		delete_files_in_directory(backup_directory);
+		delete_files_in_directory(symlink_directory);
+		system("PAUSE");
+
+		// copy files to backup
+		{
+			cout << "copying files to backup" << endl;
+			if (SetCurrentDirectory(test_data_directory.c_str()))
+			{
+				const int MAX_FILES_TO_SCAN = 50;
+
+				// directory set
+				//cout << "Directory changed to:" << endl << '\t' << test_data_directory << endl;
+
+				WIN32_FIND_DATA data;
+				HANDLE handle;
+				handle = FindFirstFile("*", &data);
+				if (handle != INVALID_HANDLE_VALUE)
+				{
+					int results = 0;
+					string found_file_name = string();
+					string new_file_name = string();
+					do {
+						found_file_name = data.cFileName;
+						//cout << "Found: '" << found_file_name << "'" << endl;
+						if (contains(data.cFileName, ".txt"))
+						{
+							//cout << found_file_name << " IS a candidate" << endl;
+							new_file_name = backup_directory + "/" + found_file_name;
+							copy_file(found_file_name, new_file_name);
+						}
+						//cout << endl;
+
+
+					} while (FindNextFile(handle, &data) && results++ < MAX_FILES_TO_SCAN);
+				}
+				else
+				{
+					cout << "Didn't find '*'?" << endl;
+				}
+			}
+			else
+				cout << "Failed to change directory to: " << endl << '\t' << test_data_directory << endl;
+			system("PAUSE");
+		}
+
+		// relocate file
+		//transa
+		bool result = relocate_file("test_e.txt", backup_directory, symlink_directory);
+		if (result)
+			cout << "successfully relocated file from '" << backup_directory << "' to '" << symlink_directory << "'" << endl;
+		else
+			cout << "Failed to relocate file from '" << backup_directory << "' to '" << symlink_directory << "'" << endl;
+	}
+
+	system("PAUSE");
+
+
+	//string old_file_name = test_data_directory + "test_a.txt";
+	//string symlink_file_name = symlink_directory + "/test_a.txt";
+
+	/*if (CreateSymbolicLink(symlink_file_name.c_str(), old_file_name.c_str(), 0) != 0)
 	{
 		cout << "symlink successfully created" << endl;
 	}
@@ -234,50 +382,7 @@ int main(int argc, char *argv[])
 		{
 			cout << "  Unknown Error Code: " << error << endl;
 		}
-	}
+	}*/
 
-	{
-		cout << endl << endl;
-		cout << "Copying .txt files to /backkup" << endl;
-		if (SetCurrentDirectory(test_data_directory.c_str()))
-		{
-			const int MAX_FILES_TO_SCAN = 50;
-
-			// directory set
-			cout << "Directory changed to:" << endl << '\t' << test_data_directory << endl;
-
-			WIN32_FIND_DATA data;
-			HANDLE handle;
-			handle = FindFirstFile("*", &data);
-			if (handle != INVALID_HANDLE_VALUE)
-			{
-				int results = 0;
-				string found_file_name = string();
-				string new_file_name = string();
-				do {
-					found_file_name = data.cFileName;
-					cout << "Found: '" << found_file_name << "'" << endl;
-					if (contains(data.cFileName, ".txt"))
-					{
-						cout << found_file_name << " IS a candidate" << endl;
-						new_file_name = backup_directory + "/" + found_file_name;
-						copy_file(found_file_name, new_file_name);
-					}
-					cout << endl;
-
-
-				} while (FindNextFile(handle, &data) && results++ < MAX_FILES_TO_SCAN);
-			}
-			else
-			{
-				cout << "Didn't find '*'?" << endl;
-			}
-		}
-		else
-			cout << "Failed to change directory to: " << endl << '\t' << test_data_directory << endl;
-	}
-
-	cout << endl;
-	system("PAUSE");
 	return 0;
 }
