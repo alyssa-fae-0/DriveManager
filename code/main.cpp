@@ -285,21 +285,7 @@ u64 get_freespace_for(const char* directory)
 	strncpy_s(drive_name, 4, directory, 3);
 	drive_name[3] = 0;
 	GetDiskFreeSpace(drive_name, &sectors_per_cluster, &bytes_per_sector, &number_of_free_sectors, &total_number_of_clusters);
-
-	//cout << "Drive name: " << drive_name << endl;
-	//cout << "Sectors Per Cluster: " << sectors_per_cluster << endl;
-	//cout << "Bytes Per Sefctor:" << bytes_per_sector << endl;
-	//cout << "Number of Free Sectors: " << number_of_free_sectors << endl;
-	//cout << "Total Number of Clusters: " << total_number_of_clusters << endl;
-	//cout << endl;
-
 	return (u64)number_of_free_sectors * (u64)bytes_per_sector;
-	//u64 free_space_bytes = (u64)number_of_free_sectors * (u64)bytes_per_sector;
-	//u64 total_space_bytes = (u64)total_number_of_clusters * (u64)sectors_per_cluster * (u64)bytes_per_sector;
-
-	//cout << "Free space: " << free_space_bytes << "B -> " << free_space_bytes / 1000 << "KB -> " << free_space_bytes / (1000 * 1000) <<
-	//	"MB -> " << (double)(free_space_bytes / (1000 * 1000)) / 1000.0 << "GB" << endl;
-	//return free_space_bytes;
 }
 
 bool relocate_file(const char* file_name, string &from, string &to)
@@ -368,6 +354,91 @@ cout << "  Unknown Error Code: " << error << endl;
 }
 }*/
 
+bool ends_with(string &str, const char *target)
+{
+	//cout << "comparing " << str << " and " << target << endl;
+	int str_len = str.length();
+	int tar_len = strlen(target);
+	if (str_len < tar_len)
+		return false; // str not long enough to contain target
+	int offset = str_len - tar_len;
+	for (int i = 0; i + offset < str_len; i++)
+	{
+		if (str[i + offset] != target[i])
+			return false;
+	}
+	return true;
+}
+
+bool ends_with(const char *str, const char *target)
+{
+	//cout << "comparing " << str << " and " << target << endl;
+	int str_len = strlen(str);
+	int tar_len = strlen(target);
+	if (str_len < tar_len)
+		return false; // str not long enough to contain target
+	int offset = str_len - tar_len;
+	for (int i = 0; i + offset < str_len; i++)
+	{
+		if (str[i+offset] != target[i])
+			return false;
+	}
+	return true;
+}
+
+u64 get_size_of_directory(string &directory_name)
+// calculate the size of the test directory
+{
+	// create search term: directory/name/*
+	string search_term = directory_name + "/";
+	if (!ends_with(search_term, "/"))
+	{
+		search_term += "/*";
+	}
+	else
+	{
+		search_term += "*";
+	}
+
+	u64 directory_size = 0;
+	WIN32_FIND_DATA data;
+	HANDLE handle = FindFirstFile(directory_name.c_str(), &data);
+	u64 file_size;
+	if (handle != INVALID_HANDLE_VALUE)
+	{
+		do
+		{
+			//cout << endl;
+			//cout << "File: " << data.cFileName << " = " << file_size << " bytes" << endl;
+			directory_size += (data.nFileSizeHigh * ((u64)MAXDWORD + 1)) + data.nFileSizeLow;
+			//if (ends_with(data.cFileName, ".lnk"))
+			//{
+			//	cout << "  file is shortcut." << endl;
+			//}
+			bool is_directory = data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
+			bool is_symlink = (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && (data.dwReserved0 & IO_REPARSE_TAG_SYMLINK);
+			if (!is_directory && !is_symlink)
+			{
+				//cout << "  file is a regular (non-symlink'd) file." << endl;
+			} 
+			else if (is_directory && !is_symlink)
+			{
+				//cout << "  file is a directory." << endl;
+			}
+			else if (is_directory && is_symlink)
+			{
+				//cout << "  file is a symlink'd directory." << endl;
+			}
+			else if (!is_directory && is_symlink)
+			{
+				//cout << "  file is a symlink'd file." << endl;
+			}
+		} while (FindNextFile(handle, &data));
+		cout << "total size: " << directory_size << " bytes" << endl;
+	}
+	return directory_size;
+}
+
 int main(int argc, char *argv[])
 {
 	cout.imbue(std::locale(""));
@@ -424,8 +495,8 @@ int main(int argc, char *argv[])
 
 		// delete all the files out of the directories
 		cout << "emptying directories" << endl;
-		delete_files_in_directory(backup_directory);
-		delete_files_in_directory(symlink_directory);
+		//delete_files_in_directory(backup_directory);
+		//delete_files_in_directory(symlink_directory);
 		//system("PAUSE");
 
 		// copy files to backup
@@ -477,6 +548,13 @@ int main(int argc, char *argv[])
 		else
 			cout << "Failed to relocate file from '" << backup_directory << "' to '" << symlink_directory << "'" << endl;
 	}
+
+	cout << "Size of backup directory: " << get_size_of_directory(backup_directory) << " bytes" << endl;
+
+	string a = "Helpo";
+	const char *b = "go";
+	if (ends_with(a, b))
+		cout << "Yo, " << a << " should NOT 'ends_with' " << b << "!" << endl;
 
 	system("PAUSE");
 	return 0;
