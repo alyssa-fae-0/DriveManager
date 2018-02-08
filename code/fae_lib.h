@@ -25,8 +25,6 @@ inline void assert_expr(bool expr_val, const char* expr, const char* file, int l
 #endif
 
 
-
-
 //struct fae_string {
 //	u32 capacity;
 //	u32 length;

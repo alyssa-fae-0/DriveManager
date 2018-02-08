@@ -118,14 +118,58 @@ void scan_files()
 	};
 }
 
-enum file_operation_result
+enum file_time_result
 {
-	for_copied,
-	for_existed,
-	for_failed
+	ft_a_newer,
+	ft_b_newer,
+	ft_equal
 };
 
-file_operation_result copy_file(string &from, string &to)
+bool file_exists(string &file_name)
+{
+	WIN32_FIND_DATA data;
+	return (FindFirstFile(file_name.c_str(), &data) != INVALID_HANDLE_VALUE);
+}
+
+file_time_result compare_file_times(string &a, string &b)
+{
+	WIN32_FIND_DATA a_data, b_data;
+	HANDLE a_handle = FindFirstFile(a.c_str(), &a_data);
+	HANDLE b_handle = FindFirstFile(b.c_str(), &a_data);
+	long result = CompareFileTime(&a_data.ftLastWriteTime, &b_data.ftLastWriteTime);
+	switch (result)
+	{
+	case -1:
+		return ft_a_newer;
+		break;
+	case 0:
+		return ft_equal;
+		break;
+	case 1:
+		return ft_b_newer;
+		break;
+	}
+	return ft_equal;
+}
+
+
+// @TODO: add function for checking if files are identical,
+//			once I add file processing
+//bool are_files_identical(string &a, string &b)
+//{
+//
+//}
+
+enum file_operation_result
+{
+	for_copied,		// file copied successfully
+	for_existed,	// file already existed
+	for_failed,		// file not copied
+	for_old			// file was older than previous file
+};
+
+// copies file from a to b, failing if b exists
+file_operation_result copy_file_no_overwrite(string &from, string &to)
 {
 	if (CopyFile(from.c_str(), to.c_str(), true))
 	{
@@ -144,11 +188,50 @@ file_operation_result copy_file(string &from, string &to)
 
 		case ERROR_FILE_EXISTS:
 			cout << to << " already exists." << endl;
-			//TODO: check if the file is the same
 			return for_existed;
 		}
 		return for_failed;
 	}
+}
+
+// copies file from a to b, overwriting b if b exists
+file_operation_result copy_file_overwrite(string &from, string &to)
+{
+	if (CopyFile(from.c_str(), to.c_str(), false))
+	{
+		cout << "Successfully copied '" << from << "' to '" << to << "'" << endl;
+		return for_copied;
+	}
+	else
+	{
+		cout << "Failed to copy '" << from << "' to '" << to << "'" << endl;
+		DWORD error = GetLastError();
+		switch (error)
+		{
+		case ERROR_FILE_NOT_FOUND:
+			cout << from << " not found." << endl;
+			return for_failed;
+
+		case ERROR_FILE_EXISTS:
+			cout << to << " already exists." << endl;
+			return for_existed;
+		}
+		return for_failed;
+	}
+}
+
+// copies file from a to b, overwriting b if a is newer than b
+file_operation_result copy_file_update(string &from, string &to)
+{
+	if (file_exists(to))
+	{
+		file_time_result time_result = compare_file_times(from, to);
+		if (time_result == ft_a_newer)
+			return copy_file_overwrite(from, to);
+		else
+			return for_old;
+	}
+	return copy_file_no_overwrite(from, to);
 }
 
 bool contains(const char *str, const char *target)
@@ -306,7 +389,7 @@ bool relocate_file(const char* file_name, string &from, string &to)
 
 
 	// copy file to new directory
-	file_operation_result result = copy_file(file, new_file);
+	file_operation_result result = copy_file_no_overwrite(file, new_file);
 	if (result == for_copied)
 	{
 		// delete old copy of file
@@ -544,7 +627,7 @@ int main(int argc, char *argv[])
 						{
 							//cout << found_file_name << " IS a candidate" << endl;
 							new_file_name = backup_directory + "/" + found_file_name;
-							copy_file(found_file_name, new_file_name);
+							copy_file_no_overwrite(found_file_name, new_file_name);
 						}
 						//cout << endl;
 
