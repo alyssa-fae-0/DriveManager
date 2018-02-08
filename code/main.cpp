@@ -386,10 +386,33 @@ bool ends_with(const char *str, const char *target)
 	return true;
 }
 
+//u64 get_size_of_directory(HANDLE handle)
+//{
+//	u64 directory_size = 0;
+//	u64 file_size = 0;
+//	WIN32_FIND_DATA data;
+//
+//	if (handle == INVALID_HANDLE_VALUE)
+//	{
+//		// @TODO: Error handling
+//		return -1; 
+//	}
+//
+//	while()
+//
+//	do
+//	{
+//		
+//	return directory_size;
+//}
+
 u64 get_size_of_directory(string &directory_name)
-// calculate the size of the test directory
 {
+	cout << "searching " << directory_name << endl;
+
 	// create search term: directory/name/*
+
+	// @TODO: add some checks to make sure directory_name ends with a /
 	string search_term = directory_name + "/";
 	if (!ends_with(search_term, "/"))
 	{
@@ -402,40 +425,37 @@ u64 get_size_of_directory(string &directory_name)
 
 	u64 directory_size = 0;
 	WIN32_FIND_DATA data;
-	HANDLE handle = FindFirstFile(directory_name.c_str(), &data);
-	u64 file_size;
-	if (handle != INVALID_HANDLE_VALUE)
-	{
-		do
+	HANDLE handle = FindFirstFile(search_term.c_str(), &data);
+	if (handle == INVALID_HANDLE_VALUE)
+		return -1; // @TODO: Error handling
+	do {
+		directory_size += ((u64)data.nFileSizeHigh * ((u64)MAXDWORD + 1)) + (u64)data.nFileSizeLow;
+		bool is_directory = data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
+		bool is_symlink = (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && (data.dwReserved0 & IO_REPARSE_TAG_SYMLINK);
+		if (!is_directory && !is_symlink)
 		{
-			//cout << endl;
-			//cout << "File: " << data.cFileName << " = " << file_size << " bytes" << endl;
-			directory_size += (data.nFileSizeHigh * ((u64)MAXDWORD + 1)) + data.nFileSizeLow;
-			//if (ends_with(data.cFileName, ".lnk"))
-			//{
-			//	cout << "  file is shortcut." << endl;
-			//}
-			bool is_directory = data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
-			bool is_symlink = (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && (data.dwReserved0 & IO_REPARSE_TAG_SYMLINK);
-			if (!is_directory && !is_symlink)
+			//cout << "  file is a regular (non-symlink'd) file." << endl;
+		}
+		else if (is_directory && !is_symlink)
+		{
+			//cout << "  file is a directory." << endl;
+			if (!matches(data.cFileName, ".") && !matches(data.cFileName, ".."))
 			{
-				//cout << "  file is a regular (non-symlink'd) file." << endl;
-			} 
-			else if (is_directory && !is_symlink)
-			{
-				//cout << "  file is a directory." << endl;
+				//don't recurse into "." or ".." folders
+				search_term = directory_name + "/";
+				search_term += data.cFileName;
+				directory_size += get_size_of_directory(search_term);
 			}
-			else if (is_directory && is_symlink)
-			{
-				//cout << "  file is a symlink'd directory." << endl;
-			}
-			else if (!is_directory && is_symlink)
-			{
-				//cout << "  file is a symlink'd file." << endl;
-			}
-		} while (FindNextFile(handle, &data));
-		cout << "total size: " << directory_size << " bytes" << endl;
-	}
+		}
+		else if (is_directory && is_symlink)
+		{
+			//cout << "  file is a symlink'd directory." << endl;
+		}
+		else if (!is_directory && is_symlink)
+		{
+			//cout << "  file is a symlink'd file." << endl;
+		}
+	} while (FindNextFile(handle, &data));
 	return directory_size;
 }
 
@@ -549,12 +569,9 @@ int main(int argc, char *argv[])
 			cout << "Failed to relocate file from '" << backup_directory << "' to '" << symlink_directory << "'" << endl;
 	}
 
-	cout << "Size of backup directory: " << get_size_of_directory(backup_directory) << " bytes" << endl;
-
-	string a = "Helpo";
-	const char *b = "go";
-	if (ends_with(a, b))
-		cout << "Yo, " << a << " should NOT 'ends_with' " << b << "!" << endl;
+	cout << endl << endl;
+	u64 backup_size = get_size_of_directory(backup_directory);
+	cout << "Size of backup directory: " << backup_size << " bytes" << endl;
 
 	system("PAUSE");
 	return 0;
