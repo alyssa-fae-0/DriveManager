@@ -14,6 +14,14 @@ using std::endl;
 using std::cin;
 
 
+
+// @TODO:
+// @NEXT:
+//    relocate folders (create symlink'd folders)
+//    driver program to test with
+
+
+
 void print_filetime_key()
 {
 	printf("YYYY_MM_DD  HH:MM:SS  Name\n");
@@ -542,7 +550,7 @@ u64 get_size_of_directory(string &directory_name)
 	return directory_size;
 }
 
-int main(int argc, char *argv[])
+int old_main(int argc, char *argv[])
 {
 	cout.imbue(std::locale(""));
 
@@ -656,6 +664,145 @@ int main(int argc, char *argv[])
 	u64 backup_size = get_size_of_directory(backup_directory);
 	cout << "Size of backup directory: " << backup_size << " bytes" << endl;
 
+	cout << endl << endl;
+
+	// create a symlink'd directory
+	string test_symlink_directory = test_data_directory + "symtest";
+	string test_folder = backup_directory + "/test_folder";
+	if (CreateSymbolicLink(test_symlink_directory.c_str(), test_folder.c_str(), SYMBOLIC_LINK_FLAG_DIRECTORY))
+		cout << "Created symlink [" << test_symlink_directory << "] targeting [" << test_folder << "]" << endl;
+	else
+		cout << "Failed to create symlink [" << test_symlink_directory << "] targeting [" << test_folder << "]" << endl;
+	
+
 	system("PAUSE");
+	return 0;
+}
+
+bool contains(string &str, const char* target)
+{
+	int target_length = strlen(target);
+	int string_length = str.length();
+	if (string_length < target_length)
+		return false; // string isn't long enough to hold target, so it logically can't be true
+	if (str.find(target, 0) != string::npos)
+		return true;
+	return false;
+}
+
+bool starts_with(string &str, const char* target)
+{
+	int target_length = strlen(target);
+	int string_length = str.length();
+	if (string_length < target_length)
+		return false; // string isn't long enough to hold target, so it logically can't be true
+	return memcmp(str.data(), target, target_length) == 0;
+}
+
+int main(int argc, char *argv[])
+{
+	cout.imbue(std::locale(""));
+
+	SYSTEM_INFO system_info;
+	GetSystemInfo(&system_info);
+
+	char *memory_page = (char*)VirtualAlloc(null, system_info.dwPageSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+	printf("Page addr: 0x%x Page size: %i bytes\n", (unsigned int)memory_page, system_info.dwPageSize);
+	char *free_memory_start = memory_page;
+
+	string input;
+	bool should_run = true;
+
+
+	/*
+	@TODO:
+	@idea: generalize this to a "slice", and update all functions to work on "slice"s.
+		Create functions that convert std::strings and cstrings to slices
+		SLICES ARE ONLY FOR NON-EDITING FUNCTIONS (for now)
+	*/
+
+
+	struct string_token
+	{
+		int start, length;
+	};
+
+	struct string_tokens
+	{
+		const char *str;
+		int num_tokens;
+		string_token *tokens;
+	};
+
+	string_tokens tokens;
+	tokens.tokens = (string_token*)memory_page;
+
+	while (should_run)
+	{
+		std::getline(cin, input);
+		
+		// tokenize the input
+		{
+			tokens.str = input.data();
+			int input_length = input.length();
+			tokens.num_tokens = 0;
+
+			int token_start = 0;
+			int token_end = -1;
+			bool last_char_alphanum = false;
+
+			for (int i = 0; i < input_length; i++)
+			{
+				char cur_char = tokens.str[i];
+				bool is_alphanum =
+					(cur_char >= 'a' && cur_char <= 'z') || 
+					(cur_char >= 'A' && cur_char <= 'Z') || 
+					(cur_char >= '0' && cur_char <= '9');
+
+				if (!last_char_alphanum && is_alphanum)
+				{
+					token_start = i;
+				}
+				else if (last_char_alphanum && !is_alphanum)
+				{
+					token_end = i;
+					tokens.tokens[tokens.num_tokens].start = token_start;
+					tokens.tokens[tokens.num_tokens].length = token_end - token_start;
+					tokens.num_tokens++;
+				}
+
+				last_char_alphanum = is_alphanum;
+			}
+
+			// @ugly @hack @fix
+			// make sure that the last token gets processed
+			if (last_char_alphanum)
+			{
+				token_end = input_length;
+				tokens.tokens[tokens.num_tokens].start = token_start;
+				tokens.tokens[tokens.num_tokens].length = token_end - token_start;
+				tokens.num_tokens++;
+			}
+
+			// check the tokens
+			cout << endl;
+			for (int token = 0; token < tokens.num_tokens; token++)
+			{
+				string_token cur_token = tokens.tokens[token];
+				cout << "token " << token << ":" << endl << "\"";
+				for (int i = 0; i < cur_token.length; i++)
+				{
+					cout << (tokens.str[cur_token.start + i]);
+				}
+				cout << "\"" << endl;
+			}
+		}
+
+
+		if (starts_with(input, "quit"))
+			should_run = false;
+	}
+
+	//system("PAUSE");
 	return 0;
 }
