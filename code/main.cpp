@@ -14,17 +14,27 @@ using std::endl;
 using std::cin;
 
 
+/*
+@TODO:
+	Add auto-complete to the driver/pseudo-terminal 
+		(probably need to do a graphics-based custom console for that)
+	Better "/" and "\" checking for get_size_of_directory()
+	Update string functions to work on slices
+	Add function for checking if files are identical,
+		once I add file processing
+	Add error handling for invalid files in get_size_of_directory()
 
-// @TODO:
-// @NEXT:
-//    relocate folders (create symlink'd folders)
-//    driver program to test with
+@NEXT:
+	Add function for relocating a folder to a backup location
+		(create symlink where folder was)
+	Add function for re-relocating a folder from a backup location
+		(put folder back where symlink was)
+*/
 
 
 /*
 @TODO:
 @idea: generalize this to a "slice", and update all functions to work on "slice"s.
-Create functions that convert std::strings and cstrings to slices
 SLICES ARE ONLY FOR NON-EDITING FUNCTIONS (for now)
 */
 struct string_slice
@@ -783,6 +793,56 @@ void get_current_directory(string &current_directory)
 	free(cur_directory);
 }
 
+const char* file_sizes[] =
+{
+	"B",
+	"KB",
+	"MB",
+	"GB",
+	"TB"
+};
+
+void best_size_for_bytes(u64 bytes, string &str)
+{
+	int shifts = 0;
+	double val = 0.0;
+	if (bytes > 1000)
+	{
+		while (shifts < 3 && bytes > 1000000)
+		{
+			bytes /= 1000;
+			shifts++;
+		}
+		val = bytes / 1000.0;
+		shifts++;
+	}
+	str = std::to_string(val);
+	str += file_sizes[shifts];
+}
+
+bool relocate_directory(string &target_directory, string &backup_directory)
+{
+	u64 size_target_directory = get_size_of_directory(target_directory);
+	u64 freespace_for_backup_directory = get_freespace_for(backup_directory.data());
+	if (size_target_directory >= freespace_for_backup_directory)
+	{
+		cout << "ERROR: target directory is larger than backup directory." << endl;
+		return false;
+	}
+	else
+	{
+		cout << "CHECK: target directory is smaller than backup directory." << endl;
+	}
+	string size;
+	best_size_for_bytes(size_target_directory, size);
+	cout << target_directory << " is " << size << endl;
+	best_size_for_bytes(freespace_for_backup_directory, size);
+	cout << backup_directory << " has " << size << " free." << endl;
+
+
+	return false;
+}
+
 
 int main(int argc, char *argv[])
 {
@@ -883,7 +943,6 @@ int main(int argc, char *argv[])
 			// check for size command
 			else if (matches(tokens.tokens[0], slice("size")))
 			{
-				//@TODO
 				if (tokens.num_tokens == 1)
 				{
 					cout << "Size of current dirrectory: " << get_size_of_directory(current_directory) << endl;
@@ -910,6 +969,20 @@ int main(int argc, char *argv[])
 					}
 
 					free(new_directory);
+				}
+			}
+
+			else if (matches(tokens.tokens[0], slice("move")))
+			{
+				if (tokens.num_tokens >= 2)
+				{
+					// @TODO: This is a trainwreck. Fix this @FIXME @HACK
+					string dir;
+					char* dir_cstring = to_string(tokens.tokens[1]);
+					dir = dir_cstring;
+					free(dir_cstring);
+					string bak_dir = "C:\\dev\\bak";
+					relocate_directory(dir, bak_dir);
 				}
 			}
 
