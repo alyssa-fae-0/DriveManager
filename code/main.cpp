@@ -551,7 +551,7 @@ bool ends_with(const char *str, const char *target)
 
 u64 get_size_of_directory(string &directory_name)
 {
-	cout << "searching " << directory_name << endl;
+	//cout << "searching " << directory_name << endl;
 
 	// create search term: directory/name/*
 
@@ -884,6 +884,17 @@ int main(int argc, char *argv[])
 			else if (matches(tokens.tokens[0], slice("size")))
 			{
 				//@TODO
+				if (tokens.num_tokens == 1)
+				{
+					cout << "Size of current dirrectory: " << get_size_of_directory(current_directory) << endl;
+				}
+				else if (tokens.num_tokens >= 2)
+				{
+					char *size_directory_name = to_string(tokens.tokens[1]);
+					string size_directory = size_directory_name;
+					free(size_directory_name);
+					cout << "Size of specified directory: " << get_size_of_directory(size_directory) << endl;
+				}
 			}
 
 			// change directory
