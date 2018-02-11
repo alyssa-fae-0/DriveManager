@@ -21,6 +21,46 @@ using std::cin;
 //    driver program to test with
 
 
+/*
+@TODO:
+@idea: generalize this to a "slice", and update all functions to work on "slice"s.
+Create functions that convert std::strings and cstrings to slices
+SLICES ARE ONLY FOR NON-EDITING FUNCTIONS (for now)
+*/
+struct string_slice
+{
+	const char *str;
+	bool readonly;
+	int start, length;
+};
+
+struct string_slices
+{
+	const char *str;
+	int num_tokens;
+	string_slice *tokens;
+};
+
+string_slice slice(string &str)
+{
+	string_slice s;
+	s.length = str.length();
+	s.readonly = true;
+	s.start = 0;
+	s.str = str.data();
+	return s;
+}
+
+string_slice slice(const char *str)
+{
+	string_slice s;
+	s.length = strlen(str);
+	s.readonly = true;
+	s.start = 0;
+	s.str = str;
+	return s;
+}
+
 
 void print_filetime_key()
 {
@@ -277,6 +317,18 @@ bool contains(const char *str, const char *target)
 		}
 	}
 	return false;
+}
+
+bool matches(string_slice a, string_slice b)
+{
+	if (a.length != b.length)
+		return false; // strings must match exactly
+	for (int i = 0; i < a.length; i++)
+	{
+		if (a.str[a.start+i] != b.str[b.start+i])
+			return false;
+	}
+	return true;
 }
 
 bool matches(const char* a, const char* b)
@@ -699,6 +751,39 @@ bool starts_with(string &str, const char* target)
 	return memcmp(str.data(), target, target_length) == 0;
 }
 
+void print_current_directory()
+{
+	WIN32_FIND_DATA file_data;
+	HANDLE file_handle = FindFirstFile("*", &file_data);
+	do
+	{
+		if (file_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			cout << "Directory: ";
+		else
+			cout << "     File: ";
+		cout << file_data.cFileName << endl;
+
+	} while (FindNextFile(file_handle, &file_data));
+}
+
+char *to_string(string_slice slice)
+{
+	char *str = (char*)malloc(slice.length + 1);
+	str[slice.length] = 0;
+	memcpy(str, (slice.str + slice.start), slice.length);
+	return str;
+}
+
+void get_current_directory(string &current_directory)
+{
+	int directory_length = GetCurrentDirectory(0, 0);
+	char *cur_directory = (char*)malloc(directory_length * sizeof(char));
+	bool result = GetCurrentDirectory(directory_length, cur_directory);
+	current_directory = cur_directory;
+	free(cur_directory);
+}
+
+
 int main(int argc, char *argv[])
 {
 	cout.imbue(std::locale(""));
@@ -713,32 +798,16 @@ int main(int argc, char *argv[])
 	string input;
 	bool should_run = true;
 
+	string_slices tokens;
+	tokens.tokens = (string_slice*)memory_page;
 
-	/*
-	@TODO:
-	@idea: generalize this to a "slice", and update all functions to work on "slice"s.
-		Create functions that convert std::strings and cstrings to slices
-		SLICES ARE ONLY FOR NON-EDITING FUNCTIONS (for now)
-	*/
-
-
-	struct string_token
-	{
-		int start, length;
-	};
-
-	struct string_tokens
-	{
-		const char *str;
-		int num_tokens;
-		string_token *tokens;
-	};
-
-	string_tokens tokens;
-	tokens.tokens = (string_token*)memory_page;
+	string current_directory;
+	get_current_directory(current_directory);
 
 	while (should_run)
 	{
+
+		cout << current_directory << ">";
 		std::getline(cin, input);
 		
 		// tokenize the input
@@ -749,46 +818,48 @@ int main(int argc, char *argv[])
 
 			int token_start = 0;
 			int token_end = -1;
-			bool last_char_alphanum = false;
+			bool last_char_whitespace = true;
 
 			for (int i = 0; i < input_length; i++)
 			{
 				char cur_char = tokens.str[i];
-				bool is_alphanum =
-					(cur_char >= 'a' && cur_char <= 'z') || 
-					(cur_char >= 'A' && cur_char <= 'Z') || 
-					(cur_char >= '0' && cur_char <= '9');
+				bool is_whitespace = (cur_char == ' ' || cur_char == 0 || cur_char == '\t');
 
-				if (!last_char_alphanum && is_alphanum)
+				// new token starting
+				if (last_char_whitespace && !is_whitespace)
 				{
 					token_start = i;
 				}
-				else if (last_char_alphanum && !is_alphanum)
+
+				// add cur string as token if we hit a non_identifier or if we hit the end of the input
+				if (!last_char_whitespace && is_whitespace)
 				{
 					token_end = i;
 					tokens.tokens[tokens.num_tokens].start = token_start;
 					tokens.tokens[tokens.num_tokens].length = token_end - token_start;
+					tokens.tokens[tokens.num_tokens].readonly = true;
+					tokens.tokens[tokens.num_tokens].str = tokens.str;
 					tokens.num_tokens++;
 				}
 
-				last_char_alphanum = is_alphanum;
-			}
+				// cur char is a letter and this is the last char in input
+				if (!is_whitespace && i == input_length - 1)
+				{
+					token_end = i;
+					tokens.tokens[tokens.num_tokens].start = token_start;
+					tokens.tokens[tokens.num_tokens].length = token_end - token_start + 1;
+					tokens.tokens[tokens.num_tokens].readonly = true;
+					tokens.tokens[tokens.num_tokens].str = tokens.str;
+					tokens.num_tokens++;
+				}
 
-			// @ugly @hack @fix
-			// make sure that the last token gets processed
-			if (last_char_alphanum)
-			{
-				token_end = input_length;
-				tokens.tokens[tokens.num_tokens].start = token_start;
-				tokens.tokens[tokens.num_tokens].length = token_end - token_start;
-				tokens.num_tokens++;
+				last_char_whitespace = is_whitespace;
 			}
 
 			// check the tokens
-			cout << endl;
 			for (int token = 0; token < tokens.num_tokens; token++)
 			{
-				string_token cur_token = tokens.tokens[token];
+				string_slice cur_token = tokens.tokens[token];
 				cout << "token " << token << ":" << endl << "\"";
 				for (int i = 0; i < cur_token.length; i++)
 				{
@@ -799,8 +870,40 @@ int main(int argc, char *argv[])
 		}
 
 
-		if (starts_with(input, "quit"))
-			should_run = false;
+		if (tokens.num_tokens > 0)
+		{
+			// check first token for "exit" or "quit"
+			if (matches(tokens.tokens[0], slice("exit")) || matches(tokens.tokens[0], slice("quit")))
+				should_run = false;
+
+			// check for ls
+			else if (matches(tokens.tokens[0], slice("ls")) || matches(tokens.tokens[0], slice("dir")))
+				print_current_directory();
+
+			// check for size command
+			else if (matches(tokens.tokens[0], slice("size")))
+			{
+				//@TODO
+			}
+
+			// change directory
+			else if (matches(tokens.tokens[0], slice("cd")))
+			{
+				if (tokens.num_tokens >= 2)
+				{
+					char *new_directory = to_string(tokens.tokens[1]);
+					cout << "new directory: \"" << new_directory << "\"" << endl;
+					if (SetCurrentDirectory(new_directory))
+					{
+						get_current_directory(current_directory);
+					}
+
+					free(new_directory);
+				}
+			}
+
+		}
+
 	}
 
 	//system("PAUSE");
