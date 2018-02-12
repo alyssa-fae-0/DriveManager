@@ -25,6 +25,7 @@ using std::cin;
 	Add error handling for invalid files in get_size_of_directory()
 
 @NEXT:
+	Add a function for copying directories (thought I already had that.)
 	Add function for relocating a folder to a backup location
 		(create symlink where folder was)
 	Add function for re-relocating a folder from a backup location
@@ -101,6 +102,45 @@ void print_filetime(FILETIME *ft, const char *identifier)
 //	}
 //}
 
+bool starts_with_drive(const char* directory)
+{
+	int str_len = strlen(directory);
+	if (str_len < 3)
+		return false; // string isn't long enough to fit "X:/"
+
+	char letter = directory[0];
+	if (!(letter >= 'A' && letter <= 'Z') && !(letter >= 'a' && letter <= 'z'))
+		return false; // first char must be identifier "A, C, z, etc"
+
+	letter = directory[1];
+	if (letter != ':')
+		return false; // second char must be a colon
+
+	letter = directory[2];
+	if (letter != '/' && letter != '\\')
+		return false; // third char must be a slash (backslash or forwardslash)
+	return true;
+}
+
+bool starts_with_drive(string &directory)
+{
+	if (directory.length() < 3)
+		return 0;
+
+	char letter = directory[0];
+	if (!(letter >= 'A' && letter <= 'Z') && !(letter >= 'a' && letter <= 'z'))
+		return false; // first char must be identifier "A, C, z, etc"
+
+	letter = directory[1];
+	if (letter != ':')
+		return false; // second char must be a colon
+
+	letter = directory[2];
+	if (letter != '/' && letter != '\\')
+		return false; // third char must be a slash (backslash or forwardslash)
+	return true;
+}
+
 enum creation_result
 {
 	cr_created,
@@ -125,6 +165,47 @@ creation_result create_directory(string &directory_path)
 	{
 		//cout << "Directory '" << directory_path << "' created." << endl;
 		return cr_created;
+	}
+
+	if (GetLastError() == ERROR_PATH_NOT_FOUND)
+	{
+		if (!starts_with_drive(directory_path))
+		{
+			cout << "ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR " << endl;
+			cout << "Path must be prefixed by a drive to be created." << endl;
+			cout << "Path specified was: " << directory_path << endl;
+			return cr_failed;
+		}
+
+		const char* path = directory_path.data();
+		int path_length = directory_path.length();
+		char *tmp = (char*)malloc(path_length + 1); // + 1 to account for null-terminator
+		int last_separator = -1;
+
+		bool success = false;
+
+		for (int i = 0; i < path_length; i++)
+		{
+			char c = path[i];
+			if ((c == '\\' || c == '/') && i > 2)
+			{
+				last_separator = i;
+				tmp[i] = 0;
+				success = CreateDirectory(tmp, 0) != 0;
+			}
+			tmp[i] = path[i];
+		}
+		if (last_separator != path_length - 1)
+		{
+			// path ends in directory name, not separator
+			// manually rerun last subdirectory 
+			// Note: we could just rerun the original string
+			tmp[path_length] = 0;
+			success = CreateDirectory(tmp, 0) != 0;
+		}
+		free(tmp);
+		if (success)
+			return cr_created;
 	}
 
 	//cout << "Directory '" << directory_path << "' failed to create." << endl;
@@ -223,7 +304,8 @@ enum file_operation_result
 	for_copied,		// file copied successfully
 	for_existed,	// file already existed
 	for_failed,		// file not copied
-	for_old			// file was older than previous file
+	for_old,		// file was older than previous file
+	for_not_found	// file could not be found
 };
 
 // copies file from a to b, failing if b exists
@@ -390,45 +472,6 @@ void delete_files_in_directory(string &directory_name)
 //	}
 //	return (u64)file_size.QuadPart;
 //}
-
-bool starts_with_drive(const char* directory)
-{
-	int str_len = strlen(directory);
-	if (str_len < 3)
-		return false; // string isn't long enough to fit "X:/"
-
-	char letter = directory[0];
-	if (!(letter >= 'A' && letter <= 'Z') && !(letter >= 'a' && letter <= 'z'))
-		return false; // first char must be identifier "A, C, z, etc"
-
-	letter = directory[1];
-	if (letter != ':')
-		return false; // second char must be a colon
-
-	letter = directory[2];
-	if (letter != '/' && letter != '\\')
-		return false; // third char must be a slash (backslash or forwardslash)
-	return true;
-}
-
-bool starts_with_drive(string &directory)
-{
-	if (directory.length() < 3)
-		return 0;
-
-	char letter = directory[0];
-	if (!(letter >= 'A' && letter <= 'Z') && !(letter >= 'a' && letter <= 'z'))
-		return false; // first char must be identifier "A, C, z, etc"
-
-	letter = directory[1];
-	if (letter != ':')
-		return false; // second char must be a colon
-
-	letter = directory[2];
-	if (letter != '/' && letter != '\\')
-		return false; // third char must be a slash (backslash or forwardslash)
-	return true;
-}
 
 u64 get_freespace_for(const char* directory)
 {
@@ -820,6 +863,91 @@ void best_size_for_bytes(u64 bytes, string &str)
 	str += file_sizes[shifts];
 }
 
+void add_separator(string &dir)
+{
+	char last_char = dir.at(dir.length() - 1);
+	if (last_char != '\\' && last_char != '/')
+	{
+		dir.append("\\");
+	}
+}
+
+void append_dir(string &dir, string& source, const char *next)
+{
+	dir = source;
+	add_separator(dir);
+	dir.append(next);
+}
+
+void get_last_sub_directory(string &directory, string &sub_dir)
+{
+	int dir_len = directory.length();
+	const char *dir = directory.data();
+
+	char last_char = dir[dir_len - 1];
+	int end = dir_len - 1;
+	if (last_char == '\\' || last_char == '/')
+	{
+		end--;
+	}
+	int start = end;
+	for (int i = end; i >= 0; i--)
+	{
+		if (dir[i] == '\\' || dir[i] == '/')
+			break;
+		start = i;
+	}
+	int length = end - start + 1;
+	sub_dir = directory.substr(start, length);
+}
+
+file_operation_result copy_directory_no_overwrite(string &from, string &to)
+{
+	cout << "###################Starting With: " << endl;
+	cout << from << endl;
+	cout << to << endl;
+
+	WIN32_FIND_DATA data;
+	string search_string;
+	append_dir(search_string, from, "*");
+	HANDLE handle = FindFirstFile(search_string.data(), &data);
+	if (handle == INVALID_HANDLE_VALUE)
+	{
+		std::cerr << "Unable to find file: " << from << endl;
+		std::cerr << "  to copy to: " << to << endl;
+		return for_not_found; // error finding file
+	}
+
+	string destination;
+	string source;
+
+	cout << endl;
+	cout << "copy_directory_no_overwrite" << endl;
+	cout << "  from: " << from << endl;
+	cout << "    to: " << to << endl;
+	cout << endl;
+
+	//found "from"
+	do
+	{
+		if (matches(data.cFileName, ".") || matches(data.cFileName, ".."))
+			continue;
+		cout << "**************************************************FOUND FILE: " << data.cFileName << " in " << from << endl;
+		append_dir(source, from, data.cFileName);
+		append_dir(destination, to, data.cFileName);
+		bool result = CopyFile(source.data(), destination.data(), true);
+
+		if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+		{
+			// file is directory; recurse
+			// @fixme: subdirectories aren't copying to the backup directory
+			//	create the directory here, not in relocate_directory()
+			copy_directory_no_overwrite(source, destination);
+		}
+	} while (FindNextFile(handle, &data));
+	return for_copied;
+}
+
 bool relocate_directory(string &target_directory, string &backup_directory)
 {
 	u64 size_target_directory = get_size_of_directory(target_directory);
@@ -833,16 +961,63 @@ bool relocate_directory(string &target_directory, string &backup_directory)
 	{
 		cout << "CHECK: target directory is smaller than backup directory." << endl;
 	}
-	string size;
-	best_size_for_bytes(size_target_directory, size);
-	cout << target_directory << " is " << size << endl;
-	best_size_for_bytes(freespace_for_backup_directory, size);
-	cout << backup_directory << " has " << size << " free." << endl;
+
+	cout << "Copying " << target_directory << " to " << backup_directory << "..." << endl;
+	cout << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << endl;
+	string sub_dir;
+	get_last_sub_directory(target_directory, sub_dir);
+	add_separator(backup_directory);
+	backup_directory += sub_dir;
+
+	if (!starts_with_drive(target_directory))
+	{
+		// folder must be a relative path
+		// fully-qualify it with current_directory
+		string cur_dir;
+		get_current_directory(cur_dir);
+		add_separator(cur_dir);
+		cur_dir += target_directory;
+		target_directory = cur_dir;
+	}
+
+	cout << "target: " << target_directory << endl;
+	cout << "backup: " << backup_directory << endl;
+	cout << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << endl;
+
+	{
+		WIN32_FIND_DATA backup_data;
+		HANDLE backup_handle = FindFirstFile(backup_directory.data(), &backup_data);
+		if (backup_handle == INVALID_HANDLE_VALUE)
+		{
+			// backup directory does not exist; create it
+
+			creation_result result = create_directory(backup_directory);
+			if (result == cr_created)
+				cout << "Successfully created backup directory at: " << backup_directory << endl;
+			else
+			{
+				cout << "Failed to create backup directory at: " << backup_directory << endl;
+				cout << "ERROR: " << GetLastError() << endl;
+			}
+		}
+	}
+
+
+	cout << "Copying " << target_directory << " to " << backup_directory << "..." << endl;
+
+	copy_directory_no_overwrite(target_directory, backup_directory);
+	cout << "Copy complete" << endl;
+
+	
+	//string size;
+	//best_size_for_bytes(size_target_directory, size);
+	//cout << target_directory << " is " << size << endl;
+	//best_size_for_bytes(freespace_for_backup_directory, size);
+	//cout << backup_directory << " has " << size << " free." << endl;
 
 
 	return false;
 }
-
 
 int main(int argc, char *argv[])
 {
