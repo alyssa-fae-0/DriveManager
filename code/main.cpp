@@ -15,21 +15,30 @@ using std::cin;
 
 
 /*
+
+@Assumptions:
+	A backup directory shouldn't already exist when a file is relocated
+	Example: for C:\dev\test_data, c:\dev\bak\test_data MUST NOT EXIST (currently)
+		Maybe we should check if the directory is empty and allow the move if the directory is empty
+			(Notify the user if we do)
+
+
 @TODO:
 	Add auto-complete to the driver/pseudo-terminal 
 		(probably need to do a graphics-based custom console for that)
 	Better "/" and "\" checking for get_size_of_directory()
 	Update string functions to work on slices
-	Add function for checking if files are identical,
-		once I add file processing
-	Add error handling for invalid files in get_size_of_directory()
+	@Robustness? Add function for checking if files are identical, once I add file processing
+	@Robustness Add error handling for invalid files in get_size_of_directory()
+	@Bug Figure out why I can't "cd c:\" but I can "cd c:\dev"
 
 @NEXT:
-	Add a function for copying directories (thought I already had that.)
 	Add function for relocating a folder to a backup location
 		(create symlink where folder was)
 	Add function for re-relocating a folder from a backup location
 		(put folder back where symlink was)
+	Figure out what to do with symlinked files/folders when copying them
+		Should I just recreate them as-is?
 */
 
 
@@ -84,23 +93,6 @@ void print_filetime(FILETIME *ft, const char *identifier)
 	FileTimeToSystemTime(ft, &st);
 	printf("%04i_%02i_%02i  %02i:%02i:%02i  %s\n", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, identifier);
 }
-
-//enum creation_directive 
-//{
-//	cd_succeed_if_exists = 0,
-//	cd_fail_if_exists,
-//	cd_fail_if_different,
-//	cd_replace_if_exist,
-//	cd_replace_if_newer
-//};
-//
-//bool create_directory(string &path, creation_directive cd) 
-//{
-//	if (cd == cd_succeed_if_exists)
-//	{
-//
-//	}
-//}
 
 bool starts_with_drive(const char* directory)
 {
@@ -521,35 +513,6 @@ bool relocate_file(const char* file_name, string &from, string &to)
 	return false;
 }
 
-
-
-//string old_file_name = test_data_directory + "test_a.txt";
-//string symlink_file_name = symlink_directory + "/test_a.txt";
-
-/*if (CreateSymbolicLink(symlink_file_name.c_str(), old_file_name.c_str(), 0) != 0)
-{
-cout << "symlink successfully created" << endl;
-}
-else
-{
-cout << "failed to create symlink" << endl;
-DWORD error = GetLastError();
-if (error == ERROR_PRIVILEGE_NOT_HELD)
-{
-cout << "  If you're not running as Administrator, this won't work." << endl;
-cout << "  If you're debugging this, you need to run VS as administrator." << endl;
-cout << "  This means you, Alyssa." << endl;
-}
-else if (error == ERROR_ALREADY_EXISTS)
-{
-cout << "  symlink already exists." << endl;
-}
-else
-{
-cout << "  Unknown Error Code: " << error << endl;
-}
-}*/
-
 bool ends_with(string &str, const char *target)
 {
 	//cout << "comparing " << str << " and " << target << endl;
@@ -581,26 +544,6 @@ bool ends_with(const char *str, const char *target)
 	}
 	return true;
 }
-
-//u64 get_size_of_directory(HANDLE handle)
-//{
-//	u64 directory_size = 0;
-//	u64 file_size = 0;
-//	WIN32_FIND_DATA data;
-//
-//	if (handle == INVALID_HANDLE_VALUE)
-//	{
-//		// @TODO: Error handling
-//		return -1; 
-//	}
-//
-//	while()
-//
-//	do
-//	{
-//		
-//	return directory_size;
-//}
 
 u64 get_size_of_directory(string &directory_name)
 {
@@ -927,6 +870,37 @@ file_operation_result copy_directory_no_overwrite(string &from, string &to)
 	cout << "    to: " << to << endl;
 	cout << endl;
 
+#if 0
+	{
+		string old_file_name = test_data_directory + "test_a.txt";
+		string symlink_file_name = symlink_directory + "/test_a.txt";
+
+		if (CreateSymbolicLink(symlink_file_name.c_str(), old_file_name.c_str(), 0) != 0)
+		{
+			cout << "symlink successfully created" << endl;
+		}
+		else
+		{
+			cout << "failed to create symlink" << endl;
+			DWORD error = GetLastError();
+			if (error == ERROR_PRIVILEGE_NOT_HELD)
+			{
+				cout << "  If you're not running as Administrator, this won't work." << endl;
+				cout << "  If you're debugging this, you need to run VS as administrator." << endl;
+				cout << "  This means you, Alyssa." << endl;
+			}
+			else if (error == ERROR_ALREADY_EXISTS)
+			{
+				cout << "  symlink already exists." << endl;
+			}
+			else
+			{
+				cout << "  Unknown Error Code: " << error << endl;
+			}
+		}
+	}
+#endif
+
 	//found "from"
 	do
 	{
@@ -935,23 +909,67 @@ file_operation_result copy_directory_no_overwrite(string &from, string &to)
 		cout << "**************************************************FOUND FILE: " << data.cFileName << " in " << from << endl;
 		append_dir(source, from, data.cFileName);
 		append_dir(destination, to, data.cFileName);
-		bool result = CopyFile(source.data(), destination.data(), true);
 
 		if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
 		{
-			// file is directory; recurse
-			// @fixme: subdirectories aren't copying to the backup directory
-			//	create the directory here, not in relocate_directory()
-			copy_directory_no_overwrite(source, destination);
+			if (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+			{
+				// directory is symlinked
+				// @TODO: What do I do with a symlinked directory?
+			}
+			else
+			{
+				// file is directory; create it and recurse
+				CreateDirectory(destination.data(), 0);
+				auto result = copy_directory_no_overwrite(source, destination);
+				if (result != for_copied)
+				{
+					cout << "Recursive call to copy_directory_no_overwrite returned: " << result << endl;
+					cout << "  (line: " << __LINE__ << ")" << endl;
+					return result;
+
+				}
+			}
+
 		}
+		else
+		{
+			if (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+			{
+				// file is symlinked
+				// @TODO: What do I do with a symlinked directory?
+			}
+			else
+			{
+				// file is not symlinked. Copy it
+				bool result = CopyFile(source.data(), destination.data(), true);
+				if (!result)
+				{
+					cout << "********************Failed to copy: " << source << " to: " << destination << endl;
+					int error = GetLastError();
+					if (error == ERROR_FILE_EXISTS)
+					{
+						cout << "ERROR: File already exists." << endl;
+					}
+					else
+					{
+						cout << "ERROR: " << error << endl;
+					}
+				}
+			}
+		}
+
 	} while (FindNextFile(handle, &data));
 	return for_copied;
 }
 
 bool relocate_directory(string &target_directory, string &backup_directory)
 {
+	// check sizes of directories
 	u64 size_target_directory = get_size_of_directory(target_directory);
 	u64 freespace_for_backup_directory = get_freespace_for(backup_directory.data());
+
+	// check if the target will fit on the backup drive
 	if (size_target_directory >= freespace_for_backup_directory)
 	{
 		cout << "ERROR: target directory is larger than backup directory." << endl;
@@ -962,17 +980,22 @@ bool relocate_directory(string &target_directory, string &backup_directory)
 		cout << "CHECK: target directory is smaller than backup directory." << endl;
 	}
 
-	cout << "Copying " << target_directory << " to " << backup_directory << "..." << endl;
+
+	cout << "Relocating " << target_directory << " to " << backup_directory << "..." << endl;
 	cout << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << endl;
+
+	// get the last directory of the target, and append it to the backup location
 	string sub_dir;
 	get_last_sub_directory(target_directory, sub_dir);
 	add_separator(backup_directory);
 	backup_directory += sub_dir;
 
+	// check if the target is a full-path
 	if (!starts_with_drive(target_directory))
 	{
 		// folder must be a relative path
-		// fully-qualify it with current_directory
+		// fully-qualify it with current_directory 
+		// (because what else could it be?)
 		string cur_dir;
 		get_current_directory(cur_dir);
 		add_separator(cur_dir);
@@ -980,8 +1003,8 @@ bool relocate_directory(string &target_directory, string &backup_directory)
 		target_directory = cur_dir;
 	}
 
-	cout << "target: " << target_directory << endl;
-	cout << "backup: " << backup_directory << endl;
+	cout << "fully-qualified target: " << target_directory << endl;
+	cout << "fully-qualified backup: " << backup_directory << endl;
 	cout << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << endl;
 
 	{
@@ -1000,20 +1023,30 @@ bool relocate_directory(string &target_directory, string &backup_directory)
 				cout << "ERROR: " << GetLastError() << endl;
 			}
 		}
+		else
+		{
+			// backup directory already exists...
+			// @TODO: Should this always be a failure condition?
+		}
 	}
 
 
 	cout << "Copying " << target_directory << " to " << backup_directory << "..." << endl;
 
-	copy_directory_no_overwrite(target_directory, backup_directory);
-	cout << "Copy complete" << endl;
+	file_operation_result result = copy_directory_no_overwrite(target_directory, backup_directory);
+	if (result != for_copied)
+	{
+		cout << "Copy failed somewhere!!!" << endl;
+	}
+	else
+	{
+		cout << "Copy succeeded!!" << endl;
+	}
 
-	
-	//string size;
-	//best_size_for_bytes(size_target_directory, size);
-	//cout << target_directory << " is " << size << endl;
-	//best_size_for_bytes(freespace_for_backup_directory, size);
-	//cout << backup_directory << " has " << size << " free." << endl;
+	// @TODO: remove old directory here
+		// Not doing that until I get the symlinks copying correctly
+	cout << "This is where I would remove the old directory: " << target_directory << "," << endl;
+	cout << "  But I don't have symlinks copying correctly yet, so I'm not gonna do that yet." << endl;
 
 
 	return false;
@@ -1035,6 +1068,8 @@ int main(int argc, char *argv[])
 
 	string_slices tokens;
 	tokens.tokens = (string_slice*)memory_page;
+
+	SetCurrentDirectory("C:\\dev");
 
 	string current_directory;
 	get_current_directory(current_directory);
@@ -1165,6 +1200,5 @@ int main(int argc, char *argv[])
 
 	}
 
-	//system("PAUSE");
 	return 0;
 }
