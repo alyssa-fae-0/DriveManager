@@ -22,6 +22,17 @@ using std::cin;
 		Maybe we should check if the directory is empty and allow the move if the directory is empty
 			(Notify the user if we do)
 
+	When relocating files/folders and we run into symlinked files/folders, we have some options:
+		1. Copy the files and folders as regular files and folders 
+			This will duplicate data and break anything that requires that the files/folders are symlinked
+				So we should probably NOT do this
+		2. Copy the files and folders as symlinks, retaining their targets
+			This could be a problem if end up copying the targets, as the symlinks wouldn't point at the correct location anymore 
+				(I think. I need to look deeper into how symlinks work on windows)
+		3. Copy the targets to the backup location first, and then copy the files and folders as symlinks pointing to the new location
+			This would be the safest option, I think. 
+		Gonna attempt option 2.
+
 
 @TODO:
 	Add auto-complete to the driver/pseudo-terminal 
@@ -206,6 +217,14 @@ creation_result create_directory(string &directory_path)
 
 void scan_files() 
 {
+	// for scanning drives and creating mappings (might need this later)
+	cout << "Iterating over all volumes?" << endl;
+	char volume_name[MAX_PATH];
+	HANDLE volume_handle = FindFirstVolume(volume_name, MAX_PATH);
+	do {
+		cout << volume_name << endl;
+	} while (FindNextVolume(volume_handle, volume_name, MAX_PATH));
+
 	// Get all connected drives
 	DWORD drives = GetLogicalDrives();
 	for (DWORD i = 0; i < 26; i++)
@@ -216,6 +235,28 @@ void scan_files()
 		//else
 		//	printf("Drive %c: Not Detected\n", drive_letter);
 	}
+
+	{
+		const char* root_path_name = "C:\\";
+		char volume_name_buffer[MAX_PATH];
+		DWORD volume_serial_number = 0;
+		DWORD max_component_length = 0;
+		DWORD file_system_flags = 0;
+		char file_system_name_buffer[MAX_PATH];
+
+		GetVolumeInformation(
+			root_path_name, volume_name_buffer, MAX_PATH,
+			&volume_serial_number, &max_component_length, &file_system_flags,
+			file_system_name_buffer, MAX_PATH);
+
+		cout << "Volume Information for 'C:\\'" << endl;
+		cout << "  Volume Name: " << volume_name_buffer << endl;
+		cout << "  Volume Serial Number: " << volume_serial_number << endl;
+		cout << "  Max Component Length: " << max_component_length << endl;
+		cout << "  File System Flags: " << file_system_flags << endl;
+		cout << "  File System Name: " << file_system_name_buffer << endl;
+	}
+
 
 	// calculate last_access threshold
 	printf("\n");
@@ -849,7 +890,7 @@ file_operation_result copy_directory_no_overwrite(string &from, string &to)
 	cout << "###################Starting With: " << endl;
 	cout << from << endl;
 	cout << to << endl;
-
+	
 	WIN32_FIND_DATA data;
 	string search_string;
 	append_dir(search_string, from, "*");
@@ -870,36 +911,36 @@ file_operation_result copy_directory_no_overwrite(string &from, string &to)
 	cout << "    to: " << to << endl;
 	cout << endl;
 
-#if 0
-	{
-		string old_file_name = test_data_directory + "test_a.txt";
-		string symlink_file_name = symlink_directory + "/test_a.txt";
-
-		if (CreateSymbolicLink(symlink_file_name.c_str(), old_file_name.c_str(), 0) != 0)
-		{
-			cout << "symlink successfully created" << endl;
-		}
-		else
-		{
-			cout << "failed to create symlink" << endl;
-			DWORD error = GetLastError();
-			if (error == ERROR_PRIVILEGE_NOT_HELD)
-			{
-				cout << "  If you're not running as Administrator, this won't work." << endl;
-				cout << "  If you're debugging this, you need to run VS as administrator." << endl;
-				cout << "  This means you, Alyssa." << endl;
-			}
-			else if (error == ERROR_ALREADY_EXISTS)
-			{
-				cout << "  symlink already exists." << endl;
-			}
-			else
-			{
-				cout << "  Unknown Error Code: " << error << endl;
-			}
-		}
-	}
-#endif
+//#if 0
+//	{
+//		string old_file_name = test_data_directory + "test_a.txt";
+//		string symlink_file_name = symlink_directory + "/test_a.txt";
+//
+//		if (CreateSymbolicLink(symlink_file_name.c_str(), old_file_name.c_str(), 0) != 0)
+//		{
+//			cout << "symlink successfully created" << endl;
+//		}
+//		else
+//		{
+//			cout << "failed to create symlink" << endl;
+//			DWORD error = GetLastError();
+//			if (error == ERROR_PRIVILEGE_NOT_HELD)
+//			{
+//				cout << "  If you're not running as Administrator, this won't work." << endl;
+//				cout << "  If you're debugging this, you need to run VS as administrator." << endl;
+//				cout << "  This means you, Alyssa." << endl;
+//			}
+//			else if (error == ERROR_ALREADY_EXISTS)
+//			{
+//				cout << "  symlink already exists." << endl;
+//			}
+//			else
+//			{
+//				cout << "  Unknown Error Code: " << error << endl;
+//			}
+//		}
+//	}
+//#endif
 
 	//found "from"
 	do
@@ -915,7 +956,48 @@ file_operation_result copy_directory_no_overwrite(string &from, string &to)
 			if (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
 			{
 				// directory is symlinked
-				// @TODO: What do I do with a symlinked directory?
+				HANDLE linked_handle = CreateFile(
+					source.data(),					// file to open
+					GENERIC_READ,					// open for reading
+					FILE_SHARE_READ,				// share for reading
+					NULL,							// default security
+					OPEN_EXISTING,					// existing file only
+					FILE_FLAG_BACKUP_SEMANTICS,		// open the target, not the link
+					NULL);							// no attr. template)
+
+				if (linked_handle == INVALID_HANDLE_VALUE)
+				{
+					cout << "Could not open file. Error: " << GetLastError() << endl;
+					return for_failed;
+				}
+
+				char path[MAX_PATH];
+				DWORD dwRet = GetFinalPathNameByHandle(linked_handle, path, MAX_PATH, 0);
+				if (dwRet >= MAX_PATH)
+				{
+					path[0] = 0;
+				}
+
+				CloseHandle(linked_handle);
+				if (path[0] == 0)
+				{
+					cout << "Failed to get target for symlink" << endl;
+					return for_failed;
+				}
+
+				const char* target_name = path;
+				if (path[0] == '\\' && path[1] == '\\' && path[2] == '?' && path[3] == '\\')
+				{
+					// name starts with '\\?\' take a pointer to the actual name
+					target_name = &path[4];
+				}
+
+				// target_name is now the location of the targeted file
+				auto result = CreateSymbolicLink(destination.data(), target_name, SYMBOLIC_LINK_FLAG_DIRECTORY);
+				if (result == 0)
+				{
+					cout << "Error creating symbolic link: " << GetLastError() << endl;
+				}
 			}
 			else
 			{
@@ -927,7 +1009,6 @@ file_operation_result copy_directory_no_overwrite(string &from, string &to)
 					cout << "Recursive call to copy_directory_no_overwrite returned: " << result << endl;
 					cout << "  (line: " << __LINE__ << ")" << endl;
 					return result;
-
 				}
 			}
 
@@ -937,7 +1018,9 @@ file_operation_result copy_directory_no_overwrite(string &from, string &to)
 			if (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
 			{
 				// file is symlinked
+
 				// @TODO: What do I do with a symlinked directory?
+				cout << "Ignoring symlinked file: " << source << endl;
 			}
 			else
 			{
@@ -1073,6 +1156,88 @@ int main(int argc, char *argv[])
 
 	string current_directory;
 	get_current_directory(current_directory);
+
+	{
+		const char *link_name = "C:\\dev\\test_data\\symtest";
+		const char *target_name = "C:\\dev\\test_data";
+
+		int result = CreateSymbolicLink(link_name, target_name, SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE);
+		cout << "Result: " << result << endl;
+		if (!result)
+		{
+			auto error = GetLastError();
+			cout << "Error: " << error << endl;
+		}
+	}
+
+	/*if(true)
+	{
+		
+		SetLastError(404);
+
+
+		HANDLE handle = CreateFile(
+			link_name,
+			0,
+			FILE_SHARE_READ,
+			0,
+			OPEN_EXISTING,
+			FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+			0
+		);
+
+		if (handle == INVALID_HANDLE_VALUE)
+		{
+			cout << "Failed to open symlink. Ugh." << endl;
+			auto error_code = GetLastError();
+			cout << "Error code (which is probably 5...): " << error_code << endl;
+		}
+		else
+		{
+			cout << "Opened successfully? Wait, what?" << endl;
+			char path[MAX_PATH];
+			auto result = GetFinalPathNameByHandle(handle, path, MAX_PATH, 0);
+			cout << "Result: " << result << endl;
+			cout << "name: " << path << endl;
+			CloseHandle(handle);
+		}
+
+	}*/
+
+
+	//{
+	//	cout << "Testing opening symlinked files/directories" << endl;
+	//	const char* file_location = "C:\\dev\\test_data\\symtest";
+
+	//	//GetFileInformationByHandleEx()
+
+	//	HANDLE linked_handle = CreateFile(
+	//		file_location,					// file to open
+	//		GENERIC_READ,								// metadata access
+	//		0,				// share for reading
+	//		NULL,							// default security
+	//		OPEN_EXISTING,					// existing file only
+	//		FILE_ATTRIBUTE_NORMAL,	// REPARSE POINT FILE
+	//		NULL);							// no attr. template)
+
+	//	if (linked_handle == INVALID_HANDLE_VALUE)
+	//	{
+	//		printf("Could not open file (error %d)\n", GetLastError());
+	//	}
+	//	else
+	//	{
+
+	//		char path[MAX_PATH];
+	//		DWORD dwRet = GetFinalPathNameByHandle(linked_handle, path, MAX_PATH, VOLUME_NAME_NT);
+	//		if (dwRet < MAX_PATH)
+	//			cout << "\nThe final path is: " << path << endl;
+	//		else 
+	//			printf("\nThe required buffer size is %d.\n", dwRet);
+	//	}
+
+	//	CloseHandle(linked_handle);
+
+	//}
 
 	while (should_run)
 	{
