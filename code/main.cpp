@@ -811,6 +811,15 @@ char *to_string(string_slice slice)
 	return str;
 }
 
+void to_string(string_slice slice, string &str)
+{
+	str.reserve(slice.length);
+	for (int i = 0; i < slice.length; i++)
+	{
+		str.push_back(slice.str[slice.start + i]);
+	}
+}
+
 void get_current_directory(string &current_directory)
 {
 	int directory_length = GetCurrentDirectory(0, 0);
@@ -1044,6 +1053,72 @@ file_operation_result copy_directory_no_overwrite(string &from, string &to)
 	return for_copied;
 }
 
+bool delete_file_or_directory(string &target)
+{
+	if (!starts_with_drive(target))
+	{
+		// path is relative; fully-qualify it with current directory
+		string current_directory;
+		get_current_directory(current_directory);
+		string tmp = current_directory;
+		add_separator(tmp);
+		tmp.append(target);
+		target = tmp;
+	}
+
+	{
+		cout << "Are you sure you want to delete: " << endl;
+		cout << "  '" << target << "'? [Y/N]" << endl;
+		string confirm;
+		cin >> confirm;
+		if (confirm[0] != 'Y' && confirm[0] != 'y')
+			return false;
+	}
+
+	WIN32_FIND_DATA data;
+	HANDLE handle = FindFirstFile(target.data(), &data);
+	if (handle == INVALID_HANDLE_VALUE)
+	{
+		cout << "Error: cannot open '" << target << "'" << endl;
+		return false;
+	}
+
+	if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+	{
+		// target is a directory
+		FindClose(handle);
+		delete_files_in_directory(target);
+		if (!RemoveDirectory(target.data()))
+		{
+			cout << "Error: cannot delete '" << target << "'" << endl;
+			return false;
+		}
+		else
+		{
+			return true;
+		}
+	}
+
+	else
+	{
+		// target is a file
+		FindClose(handle);
+		if (!DeleteFile(target.data()))
+		{
+			cout << "Error: cannot delete '" << target << "'" << endl;
+			return false;
+		}
+		else
+		{
+			return true;
+		}
+	}
+
+	for(int i = 0; i < 20; i++)
+		cout << "Never should have gotten here in delete function" << endl;
+	return false;
+}
+
 bool relocate_directory(string &target_directory, string &backup_directory)
 {
 	// check sizes of directories
@@ -1111,7 +1186,7 @@ bool relocate_directory(string &target_directory, string &backup_directory)
 	}
 
 	// @TODO: remove old directory here
-		// Not doing that until I get the symlinks copying correctly
+		// Not doing that until I get the reverse working
 	cout << endl;
 	cout << "This is where I would remove the old directory: " << target_directory << "," << endl;
 	cout << "  But I don't have symlinks copying correctly yet, so I'm not gonna do that yet." << endl;
@@ -1142,6 +1217,7 @@ int main(int argc, char *argv[])
 
 	string current_directory;
 	get_current_directory(current_directory);
+	string backup_directory = "C:\\dev\\bak";
 
 	{
 		const char *link_name = "C:\\dev\\test_data\\symtest";
@@ -1242,11 +1318,10 @@ int main(int argc, char *argv[])
 				{
 					cout << "Size of current dirrectory: " << get_size_of_directory(current_directory) << endl;
 				}
-				else if (tokens.num_tokens >= 2)
+				else if (tokens.num_tokens == 2)
 				{
-					char *size_directory_name = to_string(tokens.tokens[1]);
-					string size_directory = size_directory_name;
-					free(size_directory_name);
+					string size_directory;
+					to_string(tokens.tokens[1], size_directory);
 					cout << "Size of specified directory: " << get_size_of_directory(size_directory) << endl;
 				}
 			}
@@ -1254,7 +1329,7 @@ int main(int argc, char *argv[])
 			// change directory
 			else if (matches(tokens.tokens[0], slice("cd")))
 			{
-				if (tokens.num_tokens >= 2)
+				if (tokens.num_tokens == 2)
 				{
 					char *new_directory = to_string(tokens.tokens[1]);
 					cout << "new directory: \"" << new_directory << "\"" << endl;
@@ -1267,17 +1342,24 @@ int main(int argc, char *argv[])
 				}
 			}
 
-			else if (matches(tokens.tokens[0], slice("move")))
+			else if (matches(tokens.tokens[0], slice("relocate")))
 			{
-				if (tokens.num_tokens >= 2)
+				if (tokens.num_tokens == 2)
 				{
-					// @TODO: This is a trainwreck. Fix this @FIXME @HACK
 					string dir;
-					char* dir_cstring = to_string(tokens.tokens[1]);
-					dir = dir_cstring;
-					free(dir_cstring);
-					string bak_dir = "C:\\dev\\bak";
-					relocate_directory(dir, bak_dir);
+					to_string(tokens.tokens[1], dir);
+					relocate_directory(dir, backup_directory);
+				}
+			}
+
+			else if (matches(tokens.tokens[0], slice("delete")))
+			{
+				if (tokens.num_tokens == 2)
+				{
+					string dir;
+					to_string(tokens.tokens[1], dir);
+					// doesn't work currently; kind of afraid to debug it
+					//delete_file_or_directory(dir);
 				}
 			}
 
