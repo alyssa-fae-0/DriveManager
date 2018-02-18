@@ -154,7 +154,7 @@ enum creation_result
 creation_result create_directory(string &directory_path) 
 {
 	WIN32_FIND_DATA file_data;
-	HANDLE file_handle = FindFirstFile(directory_path.c_str(), &file_data);
+	HANDLE file_handle = FindFirstFile(directory_path.data(), &file_data);
 
 	// check for the directory
 	if (file_handle != INVALID_HANDLE_VALUE)
@@ -164,7 +164,7 @@ creation_result create_directory(string &directory_path)
 	}
 
 	// create the directory
-	if (CreateDirectory(directory_path.c_str(), null))
+	if (CreateDirectory(directory_path.data(), null))
 	{
 		//cout << "Directory '" << directory_path << "' created." << endl;
 		return cr_created;
@@ -300,14 +300,14 @@ enum file_time_result
 bool file_exists(string &file_name)
 {
 	WIN32_FIND_DATA data;
-	return (FindFirstFile(file_name.c_str(), &data) != INVALID_HANDLE_VALUE);
+	return (FindFirstFile(file_name.data(), &data) != INVALID_HANDLE_VALUE);
 }
 
 file_time_result compare_file_times(string &a, string &b)
 {
 	WIN32_FIND_DATA a_data, b_data;
-	HANDLE a_handle = FindFirstFile(a.c_str(), &a_data);
-	HANDLE b_handle = FindFirstFile(b.c_str(), &a_data);
+	HANDLE a_handle = FindFirstFile(a.data(), &a_data);
+	HANDLE b_handle = FindFirstFile(b.data(), &a_data);
 	long result = CompareFileTime(&a_data.ftLastWriteTime, &b_data.ftLastWriteTime);
 	switch (result)
 	{
@@ -344,7 +344,7 @@ enum file_operation_result
 // copies file from a to b, failing if b exists
 file_operation_result copy_file_no_overwrite(string &from, string &to)
 {
-	if (CopyFile(from.c_str(), to.c_str(), true))
+	if (CopyFile(from.data(), to.data(), true))
 	{
 		cout << "Successfully copied '" << from << "' to '" << to << "'" << endl;
 		return for_copied;
@@ -370,7 +370,7 @@ file_operation_result copy_file_no_overwrite(string &from, string &to)
 // copies file from a to b, overwriting b if b exists
 file_operation_result copy_file_overwrite(string &from, string &to)
 {
-	if (CopyFile(from.c_str(), to.c_str(), false))
+	if (CopyFile(from.data(), to.data(), false))
 	{
 		cout << "Successfully copied '" << from << "' to '" << to << "'" << endl;
 		return for_copied;
@@ -472,27 +472,6 @@ bool matches(const char* a, const char* b)
 	return true;
 }
 
-// delete all files in the directory
-void delete_files_in_directory(string &directory_name)
-{
-	WIN32_FIND_DATA find_data;
-	HANDLE handle = FindFirstFile(directory_name.c_str(), &find_data);
-	if (handle != INVALID_HANDLE_VALUE)
-	{
-		// backup folder exists
-		SetCurrentDirectory(directory_name.c_str());
-		handle = FindFirstFile("*", &find_data);
-
-		do {
-			if (!matches(find_data.cFileName, ".") && !matches(find_data.cFileName, ".."))
-			{
-				DeleteFile(find_data.cFileName);
-			}
-		} while (FindNextFile(handle, &find_data));
-		//RemoveDirectory(directory_name.c_str());
-	}
-}
-
 //u64 get_size_of_file(HANDLE file_handle) 
 //{
 //	LARGE_INTEGER file_size;
@@ -522,11 +501,11 @@ bool relocate_file(const char* file_name, string &from, string &to)
 	string file = from + "/" + file_name;
 	string new_file = to + "/" + file_name;
 
-	u64 freespace_on_drive_from = get_freespace_for(from.c_str());
-	u64 freespace_on_drive_to   = get_freespace_for(to.c_str());
+	u64 freespace_on_drive_from = get_freespace_for(from.data());
+	u64 freespace_on_drive_to   = get_freespace_for(to.data());
 
 	WIN32_FIND_DATA file_data;
-	HANDLE file_handle = FindFirstFile(file.c_str(), &file_data);
+	HANDLE file_handle = FindFirstFile(file.data(), &file_data);
 
 	LARGE_INTEGER li_file_size;
 	li_file_size.HighPart = file_data.nFileSizeHigh;
@@ -539,11 +518,11 @@ bool relocate_file(const char* file_name, string &from, string &to)
 	if (result == for_copied)
 	{
 		// delete old copy of file
-		if (!DeleteFile(file.c_str()))
+		if (!DeleteFile(file.data()))
 			return false;
 
 		// create symlink
-		if (!CreateSymbolicLink(file.c_str(), new_file.c_str(), 0))
+		if (!CreateSymbolicLink(file.data(), new_file.data(), 0))
 		{
 			for(int i = 0; i < 30; i++)
 				cout << "HEY! RUN VISUAL STUDIO IN ADMINISTRATOR MODE, YA GOOF!" << endl;
@@ -605,7 +584,7 @@ u64 get_size_of_directory(string &directory_name)
 
 	u64 directory_size = 0;
 	WIN32_FIND_DATA data;
-	HANDLE handle = FindFirstFile(search_term.c_str(), &data);
+	HANDLE handle = FindFirstFile(search_term.data(), &data);
 	if (handle == INVALID_HANDLE_VALUE)
 		return -1; // @TODO: Error handling
 	do {
@@ -637,135 +616,6 @@ u64 get_size_of_directory(string &directory_name)
 		}
 	} while (FindNextFile(handle, &data));
 	return directory_size;
-}
-
-int old_main(int argc, char *argv[])
-{
-	cout.imbue(std::locale(""));
-
-	SYSTEM_INFO system_info;
-	GetSystemInfo(&system_info);
-
-	char *memory_page = (char*)VirtualAlloc(null, system_info.dwPageSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-	printf("Page addr: 0x%x Page size: %i bytes\n", (unsigned int)memory_page, system_info.dwPageSize);
-	char *free_memory_start = memory_page;
-
-	WIN32_FIND_DATAA file_data;
-	HANDLE file_handle;
-	
-	file_handle = FindFirstFile("C:/nonexistent_file", &file_data);
-	if (file_handle == INVALID_HANDLE_VALUE)
-	{
-		// file not found
-		printf("File not found\n");
-	}
-
-	file_handle = FindFirstFile("C:\\dev\\test_data\\test_a.txt", &file_data);
-	if (file_handle == INVALID_HANDLE_VALUE)
-	{
-		// file not found
-		printf("File not found\n");
-	}
-	else
-	{
-		// file found
-		printf("\nFile: %s\n", file_data.cFileName);
-		print_filetime_key();
-		print_filetime(&file_data.ftCreationTime, "Created");
-		print_filetime(&file_data.ftLastAccessTime, "Last Accessed");
-		print_filetime(&file_data.ftLastWriteTime, "Last Write");
-
-		u64 size = (((u64)file_data.nFileSizeHigh) * (((u64)MAXDWORD) + 1)) + ((u64)file_data.nFileSizeLow);
-		printf("Size: %I64i Bytes\n", size);
-		printf("Size: %I64i KB\n", size / 1000);
-		printf("\n");
-	}
-
-	string test_data_directory = string("C:/dev/test_data/");
-	string backup_directory = test_data_directory + "backup";
-	string symlink_directory = test_data_directory + "symlinks";
-
-	// setup test
-	{
-		// create directories if they don't exist
-		cout << "creating directories" << endl;
-		create_directory(backup_directory);
-		create_directory(symlink_directory);
-		//system("PAUSE");
-
-		// delete all the files out of the directories
-		cout << "emptying directories" << endl;
-		//delete_files_in_directory(backup_directory);
-		//delete_files_in_directory(symlink_directory);
-		//system("PAUSE");
-
-		// copy files to backup
-		{
-			cout << "copying files to backup" << endl;
-			if (SetCurrentDirectory(test_data_directory.c_str()))
-			{
-				const int MAX_FILES_TO_SCAN = 50;
-
-				// directory set
-				//cout << "Directory changed to:" << endl << '\t' << test_data_directory << endl;
-
-				WIN32_FIND_DATA data;
-				HANDLE handle;
-				handle = FindFirstFile("*", &data);
-				if (handle != INVALID_HANDLE_VALUE)
-				{
-					int results = 0;
-					string found_file_name = string();
-					string new_file_name = string();
-					do {
-						found_file_name = data.cFileName;
-						//cout << "Found: '" << found_file_name << "'" << endl;
-						if (contains(data.cFileName, ".txt"))
-						{
-							//cout << found_file_name << " IS a candidate" << endl;
-							new_file_name = backup_directory + "/" + found_file_name;
-							copy_file_no_overwrite(found_file_name, new_file_name);
-						}
-						//cout << endl;
-
-
-					} while (FindNextFile(handle, &data) && results++ < MAX_FILES_TO_SCAN);
-				}
-				else
-				{
-					cout << "Didn't find '*'?" << endl;
-				}
-			}
-			else
-				cout << "Failed to change directory to: " << endl << '\t' << test_data_directory << endl;
-			//system("PAUSE");
-		}
-
-		// relocate file
-		bool result = relocate_file("test_e.txt", backup_directory, symlink_directory);
-		if (result)
-			cout << "successfully relocated file from '" << backup_directory << "' to '" << symlink_directory << "'" << endl;
-		else
-			cout << "Failed to relocate file from '" << backup_directory << "' to '" << symlink_directory << "'" << endl;
-	}
-
-	cout << endl << endl;
-	u64 backup_size = get_size_of_directory(backup_directory);
-	cout << "Size of backup directory: " << backup_size << " bytes" << endl;
-
-	cout << endl << endl;
-
-	// create a symlink'd directory
-	string test_symlink_directory = test_data_directory + "symtest";
-	string test_folder = backup_directory + "/test_folder";
-	if (CreateSymbolicLink(test_symlink_directory.c_str(), test_folder.c_str(), SYMBOLIC_LINK_FLAG_DIRECTORY))
-		cout << "Created symlink [" << test_symlink_directory << "] targeting [" << test_folder << "]" << endl;
-	else
-		cout << "Failed to create symlink [" << test_symlink_directory << "] targeting [" << test_folder << "]" << endl;
-	
-
-	system("PAUSE");
-	return 0;
 }
 
 bool contains(string &str, const char* target)
@@ -1053,6 +903,57 @@ file_operation_result copy_directory_no_overwrite(string &from, string &to)
 	return for_copied;
 }
 
+bool delete_directory_recursive(string &directory)
+{
+	cout << "entering function for: " << directory << endl;
+		WIN32_FIND_DATA find_data;
+		HANDLE handle;
+
+		string search_term = directory;
+		add_separator(search_term);
+		search_term.append("*");
+
+		handle = FindFirstFile(search_term.data(), &find_data);
+
+		string target;
+		do {
+			if (!matches(find_data.cFileName, ".") && !matches(find_data.cFileName, ".."))
+			{
+				append_dir(target, directory, find_data.cFileName);
+				cout << "  Found: " << target << endl;
+				if(find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+				{
+					// target is directory; recurse
+
+					// don't recurse into symlinked directories
+					if (!(find_data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+					{
+						if(!delete_directory_recursive(target))
+							return false;
+					}
+
+					// target directory should be empty now; delete it
+					if (!RemoveDirectory(target.data()))
+					{
+						cout << "Failed to delete directory: '" << target << "'" << endl;
+						return false;
+					}
+				}
+				else
+				{
+					// target is a file; delete it
+					if (!DeleteFile(target.data()))
+					{
+						cout << "Failed to delete file: '" << target << "'" << endl;
+						return false;
+					}
+				}
+			}
+		} while (FindNextFile(handle, &find_data));
+		FindClose(handle);
+		return true;
+}
+
 bool delete_file_or_directory(string &target)
 {
 	if (!starts_with_drive(target))
@@ -1082,41 +983,37 @@ bool delete_file_or_directory(string &target)
 		cout << "Error: cannot open '" << target << "'" << endl;
 		return false;
 	}
+	FindClose(handle);
 
 	if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
 	{
-		// target is a directory
-		FindClose(handle);
-		delete_files_in_directory(target);
+		if (!(data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+		{
+			// target isn't a symlinked directory; recurse into it
+			delete_directory_recursive(target);
+		}
+
+		// target should either be empty or a symlinked directory
 		if (!RemoveDirectory(target.data()))
 		{
-			cout << "Error: cannot delete '" << target << "'" << endl;
+			cout << "Cannnot delete directory: '" << target << "'" << endl;
+			cout << "  Error: " << GetLastError() << endl;
 			return false;
-		}
-		else
-		{
-			return true;
 		}
 	}
 
 	else
 	{
 		// target is a file
-		FindClose(handle);
 		if (!DeleteFile(target.data()))
 		{
-			cout << "Error: cannot delete '" << target << "'" << endl;
+			cout << "Cannot delete file: '" << target << "'" << endl;
+			cout << "  Error: " << GetLastError() << endl;
 			return false;
-		}
-		else
-		{
-			return true;
 		}
 	}
 
-	for(int i = 0; i < 20; i++)
-		cout << "Never should have gotten here in delete function" << endl;
-	return false;
+	return true;
 }
 
 bool relocate_directory(string &target_directory, string &backup_directory)
@@ -1196,6 +1093,110 @@ bool relocate_directory(string &target_directory, string &backup_directory)
 	return false;
 }
 
+void testbed()
+{
+	const int max_memory_pages = 1024;
+	struct Memory_Arena
+	{
+		char *memory_pages[max_memory_pages];
+		u32 page_size;
+		u32 cur_page;
+		u64 page_offset;
+
+		void allocate_page(int page_num)
+		{
+			if (page_num < 0 || page_num > max_memory_pages)
+			{
+				cout << "Error: attempted to allocate a page outside of memory page bounds; page: " << page_num << endl;
+				return;
+			}
+
+			if (memory_pages[page_num] != null)
+			{
+				// page is already allocated
+				return;
+			}
+
+			memory_pages[page_num] = (char*)VirtualAlloc(null, page_size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+		}
+
+		void init()
+		{
+			SYSTEM_INFO system_info;
+			GetSystemInfo(&system_info);
+			page_size = system_info.dwPageSize;
+
+			// we want it to be *really* obvious if we access an invalid page
+			memset(memory_pages, 0, max_memory_pages); 
+			cur_page = 0;
+			page_offset = 0;
+
+			// allocate first page
+			allocate_page(0);
+
+			cout << "Size of page on system: " << page_size << " bytes" << endl;
+			char path[MAX_PATH];
+			cout << "Size of filename: " << sizeof(path) << " bytes" << endl;
+			cout << "One page can hold: " << page_size / sizeof(path) << " filenames" << endl;
+		}
+
+		void *get(u64 size)
+		{
+			if (size > page_size)
+			{
+				for (int i = 0; i < 20; i++)
+					cout << "ERROR: REQUESTED MEMORY SIZE IS LARGER THAN A PAGE!" << endl;
+				return null;
+			}
+
+			if (size + page_offset > page_size)
+			{
+				// we need a new page
+				allocate_page(++cur_page);
+			}
+
+			// return the current offset point and update the new offset
+			char *address = memory_pages[0] + page_offset;
+			page_offset += size;
+			return address;
+		}
+
+		void reset()
+		{
+			cur_page = 0;
+			page_offset = 0;
+		}
+
+		void free()
+		{
+			for (int i = 0; i < max_memory_pages; i++)
+			{
+				if (memory_pages[i] != null)
+				{
+					VirtualFree(memory_pages[i], page_size, MEM_RELEASE);
+				}
+			}
+		}
+	};
+	
+	Memory_Arena arena;
+	arena.init();
+
+	for (int i = 0; i < max_memory_pages; i++)
+	{
+		arena.allocate_page(i);
+		if (arena.memory_pages[i] == null)
+		{
+			cout << "Failed to allocate page: " << i << endl;
+			break;
+		}
+		else
+			cout << "Allocated page " << i << endl;
+	}
+
+	arena.free();
+}
+
 int main(int argc, char *argv[])
 {
 	cout.imbue(std::locale(""));
@@ -1230,6 +1231,8 @@ int main(int argc, char *argv[])
 		const char *target_name = "C:\\dev\\test_data\\DriveManager.exe";
 		int result = CreateSymbolicLink(link_name, target_name, 0);
 	}
+
+	testbed();
 
 	while (should_run)
 	{
@@ -1359,7 +1362,7 @@ int main(int argc, char *argv[])
 					string dir;
 					to_string(tokens.tokens[1], dir);
 					// doesn't work currently; kind of afraid to debug it
-					//delete_file_or_directory(dir);
+					delete_file_or_directory(dir);
 				}
 			}
 
