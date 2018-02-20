@@ -13,6 +13,9 @@
 #define s32 uint32_t
 #define s64 uint64_t
 
+
+//#define fae_debug
+
 #ifdef fae_debug
 #include <crtdbg.h>
 #include <stdio.h>

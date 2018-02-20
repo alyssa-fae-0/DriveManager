@@ -8,6 +8,7 @@
 #include <string>
 #include <iostream>
 #include <locale>
+#include "main.h"
 
 using std::string;
 using std::cout;
@@ -54,6 +55,9 @@ struct App_Settings
 	@Bug Figure out why I can't "cd c:\" but I can "cd c:\dev"
 
 @NEXT:
+
+	update relocate function to take a target, instead of a directory
+
 	Add function for relocating a folder to a backup location
 		(create symlink where folder was)
 	Add function for re-relocating a folder from a backup location
@@ -383,43 +387,6 @@ file_operation_result copy_file_update(string &from, string &to)
 	return copy_file_no_overwrite(from, to);
 }
 
-bool contains(const char *str, const char *target)
-{
-	int str_length = strlen(str);
-	int tar_length = strlen(target);
-	if (tar_length > str_length)
-		return false;
-	for (int i = 0; i < str_length; i++)
-	{
-		// found the start of the target
-		if (str[i] == target[0])
-		{
-			bool matching = true;
-			for (int substring_letter = 0; 
-				matching &&
-				substring_letter < str_length && 
-				substring_letter < tar_length; 
-				substring_letter++)
-			{
-				//current letters match
-				if (str[i + substring_letter] == target[substring_letter])
-				{
-					// current match is final letter, so we're done
-					if (substring_letter == tar_length - 1)
-					{
-						return true;
-					}
-				}
-				else
-				{
-					matching = false;
-				}
-			}
-		}
-	}
-	return false;
-}
-
 
 //u64 get_size_of_file(HANDLE file_handle) 
 //{
@@ -574,7 +541,7 @@ const char* file_sizes[] =
 	"TB"
 };
 
-void best_size_for_bytes(u64 bytes, string &str)
+void get_best_size_for_bytes(u64 bytes, string &str)
 {
 	int shifts = 0;
 	double val = 0.0;
@@ -632,7 +599,6 @@ void get_last_sub_directory(string &directory, string &sub_dir)
 
 file_operation_result copy_directory_no_overwrite(string &from, string &to)
 {
-	
 	WIN32_FIND_DATA data;
 	string search_string;
 	append_dir(search_string, from, "*");
@@ -902,101 +868,130 @@ bool delete_file_or_directory(string &target)
 	return true;
 }
 
-// moves the indicated file/folder to the backup_directory,
-//   makes an appropriate symlink where the target was located
-bool relocate_target(string &target, string &backup_directory)
+void qualify_target_if_relative(string &target, App_Settings &settings)
 {
-	enum Target_Type
+	// check if the target is a full-path
+	if (!starts_with_drive(target))
 	{
-		tt_file					= 0, 
-		tt_directory			= 1, 
-		tt_symlink_file			= 2,
-		tt_symlink_directory	= 3,
-		tt_error				= -1
-	};
+		// otherwise, qualify it
+		string qualified_dir;
+		qualified_dir = settings.current_directory;
+		add_separator(qualified_dir);
+		qualified_dir += target;
+		target = qualified_dir;
+	}
+}
+
+enum Target_Type
+{
+	tt_normal_file = 0,
+	tt_normal_directory = 1,
+	tt_symlink_file = 2,
+	tt_symlink_directory = 3,
+	tt_error = -1
+};
+
+Target_Type get_target_type(string &target, App_Settings &settings)
+{
+	// if we're calling this instead of checking manually,
+	//   we probalby haven't tried opening the target yet,
+	//   so it could be a relative path
+	qualify_target_if_relative(target, settings);
 
 	Target_Type target_type = tt_error;
+	WIN32_FIND_DATA data;
+	HANDLE handle = FindFirstFile(target.data(), &data);
 
-	//qualify_target_if_relative(target);
-
-	// get the type of the target
+	if (handle == INVALID_HANDLE_VALUE)
 	{
-		//HANDLE handle = 
+		cout << "ERROR: can't open " << target << endl;
+		cout << "  File: " << __FILE__ << "  Line: " << __LINE__ << endl;
+		return tt_error;
+	}
+
+	if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+	{
+		// target is directory
+		if (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT && data.dwReserved0 & IO_REPARSE_TAG_SYMLINK)
+			target_type = tt_symlink_directory;
+		else
+			target_type = tt_normal_directory;
+	}
+	else 
+	{
+		// target is file
+		if (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT && data.dwReserved0 & IO_REPARSE_TAG_SYMLINK)
+			target_type = tt_symlink_file;
+		else
+			target_type = tt_normal_file;
+	}
+
+	FindClose(handle);
+	return target_type;
+}
+
+// moves the indicated file/folder to the backup_directory,
+//   makes an appropriate symlink where the target was located
+bool relocate_target(string &target, App_Settings &settings)
+{
+	qualify_target_if_relative(target, settings);
+	Target_Type target_type = get_target_type(target, settings);
+
+	if (target_type == tt_symlink_directory || target_type == tt_symlink_file)
+	{
+		cout << "ERROR: target is a symbolic link." << endl;
+		cout << "  Trying to backup '" << target << "' to '" << settings.backup_directory << "'" << endl;
+		return false;
 	}
 
 	// check sizes of directories
 	u64 size_target_directory = get_size_of_directory(target);
-	u64 freespace_for_backup_directory = get_freespace_for(backup_directory.data());
+	u64 freespace_for_backup_directory = get_freespace_for(settings.backup_directory.data());
 
 	// check if the target will fit on the backup drive
 	if (size_target_directory >= freespace_for_backup_directory)
 	{
 		cout << "ERROR: target directory is larger than backup directory." << endl;
+		cout << "  This is either a bug, or you're out of harddrive space." << endl;
+		cout << "  Trying to backup '" << target << "' to '" << settings.backup_directory << "'" << endl;
+		string size;
+		get_best_size_for_bytes(size_target_directory, size);
+		cout << "  Size of target: " << size << endl;
+		get_best_size_for_bytes(freespace_for_backup_directory, size);
+		cout << "  Freespace left: " << size << endl;
 		return false;
 	}
-	
-	// get the last directory of the target, and append it to the backup location
-	string sub_dir;
-	get_last_sub_directory(target, sub_dir);
-	add_separator(backup_directory);
-	backup_directory += sub_dir;
 
-	// check if the target is a full-path
-	if (!starts_with_drive(target))
+	// create the backup directory if it doesn't exist
 	{
-		// folder must be a relative path
-		// fully-qualify it with current_directory 
-		// (because what else could it be?)
-		string cur_dir;
-		get_current_directory(cur_dir);
-		add_separator(cur_dir);
-		cur_dir += target;
-		target = cur_dir;
-	}
-
-	{
-		WIN32_FIND_DATA backup_data;
-		HANDLE backup_handle = FindFirstFile(backup_directory.data(), &backup_data);
-		if (backup_handle == INVALID_HANDLE_VALUE)
+		creation_result result = create_directory(settings.backup_directory);
+		if (result == cr_failed)
 		{
-			// backup directory does not exist; create it
-
-			creation_result result = create_directory(backup_directory);
-			if (result != cr_created)
-			{
-				cout << "Failed to create backup directory at: " << backup_directory << endl;
-				cout << "ERROR: " << GetLastError() << endl;
-			}
-		}
-		else
-		{
-			// backup directory already exists...
-			// @TODO: Should this always be a failure condition?
+			cout << "Failed to create backup directory at: " << settings.backup_directory << endl;
+			cout << "ERROR: " << GetLastError() << endl;
+			return false;
 		}
 	}
 
+	cout << "Copying " << target << " to " << settings.backup_directory << "..." << endl;
+	string cur_path = settings.backup_directory;
+	bool success = copy_target_no_overwrite(target, target_type, cur_path, settings);
 
-	cout << "Copying " << target << " to " << backup_directory << "..." << endl;
-
-	file_operation_result result = copy_directory_no_overwrite(target, backup_directory);
-	if (result != for_copied)
+	if (!success)
 	{
-		cout << "Copy failed somewhere!!!" << endl;
-	}
-	else
-	{
-		cout << "Copy succeeded!" << endl;
+		cout << "ERROR: Relocate failed. Details should be printed above." << endl;
+		return false;
 	}
 
 	// @TODO: remove old directory here
 		// Not doing that until I get the reverse working
 	cout << endl;
 	cout << "This is where I would remove the old directory: " << target << "," << endl;
-	cout << "  But I don't have symlinks copying correctly yet, so I'm not gonna do that yet." << endl;
+	cout << "  But I don't have restoring yet, so I'm not gonna do that yet." << endl;
 	cout << endl;
 
-
-	return false;
+	// true enough for now
+	return true;
 }
 
 bool restore_target(string &target, string &backup_directory)

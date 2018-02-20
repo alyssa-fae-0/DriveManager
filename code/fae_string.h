@@ -109,6 +109,43 @@ bool contains(string &str, const char* target)
 	return false;
 }
 
+bool contains(const char *str, const char *target)
+{
+	int str_length = strlen(str);
+	int tar_length = strlen(target);
+	if (tar_length > str_length)
+		return false;
+	for (int i = 0; i < str_length; i++)
+	{
+		// found the start of the target
+		if (str[i] == target[0])
+		{
+			bool matching = true;
+			for (int substring_letter = 0;
+				matching &&
+				substring_letter < str_length &&
+				substring_letter < tar_length;
+				substring_letter++)
+			{
+				//current letters match
+				if (str[i + substring_letter] == target[substring_letter])
+				{
+					// current match is final letter, so we're done
+					if (substring_letter == tar_length - 1)
+					{
+						return true;
+					}
+				}
+				else
+				{
+					matching = false;
+				}
+			}
+		}
+	}
+	return false;
+}
+
 bool starts_with(string &str, const char* target)
 {
 	int target_length = strlen(target);
