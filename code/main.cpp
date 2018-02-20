@@ -3,6 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include "fae_lib.h"
+#include "fae_string.h"
 
 #include <string>
 #include <iostream>
@@ -12,6 +13,15 @@ using std::string;
 using std::cout;
 using std::endl;
 using std::cin;
+
+
+
+struct App_Settings
+{
+	string current_directory;
+	string backup_directory;
+
+};
 
 
 /*
@@ -51,46 +61,6 @@ using std::cin;
 	Figure out what to do with symlinked files/folders when copying them
 		Should I just recreate them as-is?
 */
-
-
-/*
-@TODO:
-@idea: generalize this to a "slice", and update all functions to work on "slice"s.
-SLICES ARE ONLY FOR NON-EDITING FUNCTIONS (for now)
-*/
-struct string_slice
-{
-	const char *str;
-	bool readonly;
-	int start, length;
-};
-
-struct string_slices
-{
-	const char *str;
-	int num_tokens;
-	string_slice *tokens;
-};
-
-string_slice slice(string &str)
-{
-	string_slice s;
-	s.length = str.length();
-	s.readonly = true;
-	s.start = 0;
-	s.str = str.data();
-	return s;
-}
-
-string_slice slice(const char *str)
-{
-	string_slice s;
-	s.length = strlen(str);
-	s.readonly = true;
-	s.start = 0;
-	s.str = str;
-	return s;
-}
 
 
 void print_filetime_key()
@@ -300,7 +270,13 @@ enum file_time_result
 bool file_exists(string &file_name)
 {
 	WIN32_FIND_DATA data;
-	return (FindFirstFile(file_name.data(), &data) != INVALID_HANDLE_VALUE);
+	HANDLE handle = FindFirstFile(file_name.data(), &data);
+	if (handle != INVALID_HANDLE_VALUE)
+	{
+		FindClose(handle);
+		return true;
+	}
+	return false;
 }
 
 file_time_result compare_file_times(string &a, string &b)
@@ -444,33 +420,6 @@ bool contains(const char *str, const char *target)
 	return false;
 }
 
-bool matches(string_slice a, string_slice b)
-{
-	if (a.length != b.length)
-		return false; // strings must match exactly
-	for (int i = 0; i < a.length; i++)
-	{
-		if (a.str[a.start+i] != b.str[b.start+i])
-			return false;
-	}
-	return true;
-}
-
-bool matches(const char* a, const char* b)
-{
-	int a_len = strlen(a);
-	int b_len = strlen(b);
-	if (a_len != b_len)
-		return false;
-	for (int i = 0; i < a_len; i++)
-	{
-		if (a[i] != b[i])
-		{
-			return false;
-		}
-	}
-	return true;
-}
 
 //u64 get_size_of_file(HANDLE file_handle) 
 //{
@@ -533,37 +482,7 @@ bool relocate_file(const char* file_name, string &from, string &to)
 	return false;
 }
 
-bool ends_with(string &str, const char *target)
-{
-	//cout << "comparing " << str << " and " << target << endl;
-	int str_len = str.length();
-	int tar_len = strlen(target);
-	if (str_len < tar_len)
-		return false; // str not long enough to contain target
-	int offset = str_len - tar_len;
-	for (int i = 0; i + offset < str_len; i++)
-	{
-		if (str[i + offset] != target[i])
-			return false;
-	}
-	return true;
-}
 
-bool ends_with(const char *str, const char *target)
-{
-	//cout << "comparing " << str << " and " << target << endl;
-	int str_len = strlen(str);
-	int tar_len = strlen(target);
-	if (str_len < tar_len)
-		return false; // str not long enough to contain target
-	int offset = str_len - tar_len;
-	for (int i = 0; i + offset < str_len; i++)
-	{
-		if (str[i+offset] != target[i])
-			return false;
-	}
-	return true;
-}
 
 u64 get_size_of_directory(string &directory_name)
 {
@@ -618,25 +537,7 @@ u64 get_size_of_directory(string &directory_name)
 	return directory_size;
 }
 
-bool contains(string &str, const char* target)
-{
-	int target_length = strlen(target);
-	int string_length = str.length();
-	if (string_length < target_length)
-		return false; // string isn't long enough to hold target, so it logically can't be true
-	if (str.find(target, 0) != string::npos)
-		return true;
-	return false;
-}
 
-bool starts_with(string &str, const char* target)
-{
-	int target_length = strlen(target);
-	int string_length = str.length();
-	if (string_length < target_length)
-		return false; // string isn't long enough to hold target, so it logically can't be true
-	return memcmp(str.data(), target, target_length) == 0;
-}
 
 void print_current_directory()
 {
@@ -653,22 +554,7 @@ void print_current_directory()
 	} while (FindNextFile(file_handle, &file_data));
 }
 
-char *to_string(string_slice slice)
-{
-	char *str = (char*)malloc(slice.length + 1);
-	str[slice.length] = 0;
-	memcpy(str, (slice.str + slice.start), slice.length);
-	return str;
-}
 
-void to_string(string_slice slice, string &str)
-{
-	str.reserve(slice.length);
-	for (int i = 0; i < slice.length; i++)
-	{
-		str.push_back(slice.str[slice.start + i]);
-	}
-}
 
 void get_current_directory(string &current_directory)
 {
@@ -1016,10 +902,30 @@ bool delete_file_or_directory(string &target)
 	return true;
 }
 
-bool relocate_directory(string &target_directory, string &backup_directory)
+// moves the indicated file/folder to the backup_directory,
+//   makes an appropriate symlink where the target was located
+bool relocate_target(string &target, string &backup_directory)
 {
+	enum Target_Type
+	{
+		tt_file					= 0, 
+		tt_directory			= 1, 
+		tt_symlink_file			= 2,
+		tt_symlink_directory	= 3,
+		tt_error				= -1
+	};
+
+	Target_Type target_type = tt_error;
+
+	//qualify_target_if_relative(target);
+
+	// get the type of the target
+	{
+		//HANDLE handle = 
+	}
+
 	// check sizes of directories
-	u64 size_target_directory = get_size_of_directory(target_directory);
+	u64 size_target_directory = get_size_of_directory(target);
 	u64 freespace_for_backup_directory = get_freespace_for(backup_directory.data());
 
 	// check if the target will fit on the backup drive
@@ -1031,12 +937,12 @@ bool relocate_directory(string &target_directory, string &backup_directory)
 	
 	// get the last directory of the target, and append it to the backup location
 	string sub_dir;
-	get_last_sub_directory(target_directory, sub_dir);
+	get_last_sub_directory(target, sub_dir);
 	add_separator(backup_directory);
 	backup_directory += sub_dir;
 
 	// check if the target is a full-path
-	if (!starts_with_drive(target_directory))
+	if (!starts_with_drive(target))
 	{
 		// folder must be a relative path
 		// fully-qualify it with current_directory 
@@ -1044,8 +950,8 @@ bool relocate_directory(string &target_directory, string &backup_directory)
 		string cur_dir;
 		get_current_directory(cur_dir);
 		add_separator(cur_dir);
-		cur_dir += target_directory;
-		target_directory = cur_dir;
+		cur_dir += target;
+		target = cur_dir;
 	}
 
 	{
@@ -1070,9 +976,9 @@ bool relocate_directory(string &target_directory, string &backup_directory)
 	}
 
 
-	cout << "Copying " << target_directory << " to " << backup_directory << "..." << endl;
+	cout << "Copying " << target << " to " << backup_directory << "..." << endl;
 
-	file_operation_result result = copy_directory_no_overwrite(target_directory, backup_directory);
+	file_operation_result result = copy_directory_no_overwrite(target, backup_directory);
 	if (result != for_copied)
 	{
 		cout << "Copy failed somewhere!!!" << endl;
@@ -1085,11 +991,16 @@ bool relocate_directory(string &target_directory, string &backup_directory)
 	// @TODO: remove old directory here
 		// Not doing that until I get the reverse working
 	cout << endl;
-	cout << "This is where I would remove the old directory: " << target_directory << "," << endl;
+	cout << "This is where I would remove the old directory: " << target << "," << endl;
 	cout << "  But I don't have symlinks copying correctly yet, so I'm not gonna do that yet." << endl;
 	cout << endl;
 
 
+	return false;
+}
+
+bool restore_target(string &target, string &backup_directory)
+{
 	return false;
 }
 
@@ -1211,14 +1122,14 @@ int main(int argc, char *argv[])
 	string input;
 	bool should_run = true;
 
-	string_slices tokens;
-	tokens.tokens = (string_slice*)memory_page;
+	Slice_Group tokens;
+	tokens.tokens = (Slice*)memory_page;
 
-	SetCurrentDirectory("C:\\dev");
+	App_Settings settings;
+	settings.current_directory = "C:\\dev";
+	settings.backup_directory = "C:\\dev\\bak";
 
-	string current_directory;
-	get_current_directory(current_directory);
-	string backup_directory = "C:\\dev\\bak";
+	SetCurrentDirectory(settings.current_directory.data());
 
 	{
 		const char *link_name = "C:\\dev\\test_data\\symtest";
@@ -1232,12 +1143,12 @@ int main(int argc, char *argv[])
 		int result = CreateSymbolicLink(link_name, target_name, 0);
 	}
 
-	testbed();
+	//testbed();
 
 	while (should_run)
 	{
 
-		cout << current_directory << ">";
+		cout << settings.current_directory << ">";
 		std::getline(cin, input);
 
 		// tokenize the input
@@ -1267,7 +1178,6 @@ int main(int argc, char *argv[])
 					token_end = i;
 					tokens.tokens[tokens.num_tokens].start = token_start;
 					tokens.tokens[tokens.num_tokens].length = token_end - token_start;
-					tokens.tokens[tokens.num_tokens].readonly = true;
 					tokens.tokens[tokens.num_tokens].str = tokens.str;
 					tokens.num_tokens++;
 				}
@@ -1278,7 +1188,6 @@ int main(int argc, char *argv[])
 					token_end = i;
 					tokens.tokens[tokens.num_tokens].start = token_start;
 					tokens.tokens[tokens.num_tokens].length = token_end - token_start + 1;
-					tokens.tokens[tokens.num_tokens].readonly = true;
 					tokens.tokens[tokens.num_tokens].str = tokens.str;
 					tokens.num_tokens++;
 				}
@@ -1290,7 +1199,7 @@ int main(int argc, char *argv[])
 			cout << "Tokens: ";
 			for (int token = 0; token < tokens.num_tokens; token++)
 			{
-				string_slice cur_token = tokens.tokens[token];
+				Slice cur_token = tokens.tokens[token];
 				cout << "\"";
 				for (int i = 0; i < cur_token.length; i++)
 				{
@@ -1307,19 +1216,19 @@ int main(int argc, char *argv[])
 		if (tokens.num_tokens > 0)
 		{
 			// check first token for "exit" or "quit"
-			if (matches(tokens.tokens[0], slice("exit")) || matches(tokens.tokens[0], slice("quit")))
+			if (matches(tokens.tokens[0], "exit") || matches(tokens.tokens[0], "quit"))
 				should_run = false;
 
 			// check for ls
-			else if (matches(tokens.tokens[0], slice("ls")) || matches(tokens.tokens[0], slice("dir")))
+			else if (matches(tokens.tokens[0], "ls") || matches(tokens.tokens[0], "target"))
 				print_current_directory();
 
 			// check for size command
-			else if (matches(tokens.tokens[0], slice("size")))
+			else if (matches(tokens.tokens[0], "size"))
 			{
 				if (tokens.num_tokens == 1)
 				{
-					cout << "Size of current dirrectory: " << get_size_of_directory(current_directory) << endl;
+					cout << "Size of current dirrectory: " << get_size_of_directory(settings.current_directory) << endl;
 				}
 				else if (tokens.num_tokens == 2)
 				{
@@ -1330,7 +1239,7 @@ int main(int argc, char *argv[])
 			}
 
 			// change directory
-			else if (matches(tokens.tokens[0], slice("cd")))
+			else if (matches(tokens.tokens[0], "cd"))
 			{
 				if (tokens.num_tokens == 2)
 				{
@@ -1338,24 +1247,34 @@ int main(int argc, char *argv[])
 					cout << "new directory: \"" << new_directory << "\"" << endl;
 					if (SetCurrentDirectory(new_directory))
 					{
-						get_current_directory(current_directory);
+						get_current_directory(settings.current_directory);
 					}
 
 					free(new_directory);
 				}
 			}
 
-			else if (matches(tokens.tokens[0], slice("relocate")))
+			else if (matches(tokens.tokens[0], "move"))
 			{
 				if (tokens.num_tokens == 2)
 				{
-					string dir;
-					to_string(tokens.tokens[1], dir);
-					relocate_directory(dir, backup_directory);
+					string target;
+					to_string(tokens.tokens[1], target);
+					relocate_target(target, settings.backup_directory);
 				}
 			}
 
-			else if (matches(tokens.tokens[0], slice("delete")))
+			else if (matches(tokens.tokens[0], "restore"))
+			{
+				if (tokens.num_tokens == 2)
+				{
+					string target;
+					to_string(tokens.tokens[1], target);
+					restore_target(target, settings.backup_directory);
+				}
+			}
+
+			else if (matches(tokens.tokens[0], "delete"))
 			{
 				if (tokens.num_tokens == 2)
 				{
