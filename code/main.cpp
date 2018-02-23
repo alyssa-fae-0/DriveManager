@@ -76,29 +76,19 @@ int main(int argc, char *argv[])
 	tokens.tokens = (Slice*)memory_page;
 
 	App_Settings settings;
-	settings.current_directory = "C:\\dev";
-	settings.backup_directory = "C:\\dev\\bak";
+	settings.current_dir		= "C:\\dev";
+	settings.backup_dir			= "C:\\dev\\bak";
+	settings.test_data_dir		= "C:\\dev\\test_data";
+	settings.test_data_source	= "C:\\dev\\test_data_src";
 
-	SetCurrentDirectory(settings.current_directory.data());
+	SetCurrentDirectory(settings.current_dir.data());
 
-	{
-		const char *link_name = "C:\\dev\\test_data\\symtest";
-		const char *target_name = "C:\\dev\\test_data";
-		int result = CreateSymbolicLink(link_name, target_name, SYMBOLIC_LINK_FLAG_DIRECTORY);
-	}
-
-	{
-		const char *link_name = "C:\\dev\\test_data\\symlinks\\DriveManager.exe";
-		const char *target_name = "C:\\dev\\test_data\\DriveManager.exe";
-		int result = CreateSymbolicLink(link_name, target_name, 0);
-	}
-
-	filesystem_node_test();
+	test_filesystem_node();
 
 	while (should_run)
 	{
 
-		cout << settings.current_directory << ">";
+		cout << settings.current_dir << ">";
 		std::getline(cin, input);
 
 		// tokenize the input
@@ -178,7 +168,7 @@ int main(int argc, char *argv[])
 			{
 				if (tokens.num_tokens == 1)
 				{
-					cout << "Size of current dirrectory: " << get_size_of_directory(settings.current_directory) << endl;
+					cout << "Size of current dirrectory: " << get_size_of_directory(settings.current_dir) << endl;
 				}
 				else if (tokens.num_tokens == 2)
 				{
@@ -197,7 +187,7 @@ int main(int argc, char *argv[])
 					cout << "new directory: \"" << new_directory << "\"" << endl;
 					if (SetCurrentDirectory(new_directory))
 					{
-						get_current_directory(settings.current_directory);
+						get_current_directory(settings.current_dir);
 					}
 
 					free(new_directory);
@@ -210,7 +200,7 @@ int main(int argc, char *argv[])
 				{
 					string target;
 					to_string(tokens.tokens[1], target);
-					//relocate_target(target, settings);
+					relocate_target(target, settings);
 				}
 			}
 
@@ -233,6 +223,11 @@ int main(int argc, char *argv[])
 					// doesn't work currently; kind of afraid to debug it
 					delete_file_or_directory(dir);
 				}
+			}
+
+			else if (matches(tokens.tokens[0], "reset"))
+			{
+				reset_test_data(settings);
 			}
 
 		}

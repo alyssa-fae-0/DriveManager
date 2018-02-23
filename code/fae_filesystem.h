@@ -45,6 +45,7 @@ struct Filesystem_Node
 {
 	char path[MAX_PATH + 1];
 	int length;
+	bool info_is_current;
 	bool exists;
 	Node_Type type;
 
@@ -54,9 +55,10 @@ struct Filesystem_Node
 		length = 0;
 		exists = false;
 		type = nt_error;
+		info_is_current = true;
 	}
 
-	Filesystem_Node(const char *init_path)
+	Filesystem_Node(const char *init_path, bool should_update = true)
 	{
 		int init_length = strlen(init_path);
 		memcpy_s(path, MAX_PATH + 1, init_path, init_length);
@@ -64,10 +66,14 @@ struct Filesystem_Node
 		path[length] = 0;
 		exists = false;
 		type = nt_error;
+		info_is_current = false;
+		update_info();
 	}
 
 	void print()
 	{
+		if (!info_is_current)
+			update_info();
 		cout << "Path: '" << path << "', exists: ";
 		if (exists)
 		{
@@ -99,8 +105,26 @@ struct Filesystem_Node
 		cout << endl;
 	}
 
+	bool path_ends_in_separator()
+	{
+		if (length > 0 && (path[length - 1] == '\\' || path[length - 1] == '/'))
+				return true;
+		return false;
+	}
+
+	bool path_needs_separator()
+	{
+		return (length == 0 || path_ends_in_separator()) ? false : true;
+	}
+
 	void update_info()
 	{
+		if (info_is_current)
+		{
+			cerr << "Error: call to update_info, but info should already be current." << endl;
+			return;
+		}
+
 		WIN32_FIND_DATA data;
 		HANDLE handle = FindFirstFile(path, &data);
 		if (handle == INVALID_HANDLE_VALUE)
@@ -113,36 +137,36 @@ struct Filesystem_Node
 			exists = true;
 			type = get_node_type(data);
 		}
+		info_is_current = true;
 	}
 
 	bool push(const char *subpath, bool should_update_info = true)
 	{
+		// sanity check
+		if (length < 0)
+		{
+			cerr << "ERROR: Path has negative length." << endl;
+			return false;
+		}
+
 		// check if this plus separator will fit
 
 		int subpath_length = strlen(subpath);
-
 		if (subpath_length <= 0)
 		{
 			cerr << "Attempt to push invalid subpath." << endl;
 			return false;
 		}
 
-		bool need_separator;
-		if (length > 0)
+		if (length == 0)
 		{
-			if (path[length - 1] == '\\' || path[length - 1] == '/')
-				need_separator = false;
-			else
-				need_separator = true;
-		}
-		else
-		{
-			// string is empty; we don't need a seperator
-			//  though this should probably be a warning/error?
+			// @review string is empty; should this be a warning/error?
 			cerr << "Pushing subpath onto empty path. Was this intentional?" << endl;
-			need_separator = false;
 		}
-		int total_length = subpath_length + (need_separator ? 1 : 0); // @CLEANUP: I should probably just add the bool directly
+
+		bool needs_separator = path_needs_separator();
+
+		int total_length = subpath_length + (needs_separator ? 1 : 0); // @CLEANUP: I should probably just add the bool directly
 
 		if (length + total_length > MAX_PATH)
 		{
@@ -151,18 +175,20 @@ struct Filesystem_Node
 		}
 		
 		// add separator if needed
-		if (need_separator)
+		if (needs_separator)
 		{
 			path[length] = '\\';
 			length++;
+			info_is_current = false;
 		}
 
 		// add subpath
-		memcpy_s(&path[length], MAX_PATH + 1, subpath, subpath_length);
+		memcpy_s(&path[length], MAX_PATH + 1 - length, subpath, subpath_length);
 		length += subpath_length;
 
 		// set null terminator
 		path[length] = 0;
+		info_is_current = false;
 
 		if (should_update_info)
 			update_info();
@@ -184,6 +210,7 @@ struct Filesystem_Node
 			// exit the function before we pop a subpath
 			length--;
 			path[length] = 0;
+			info_is_current = false;
 		}
 
 		// find first separator from right
@@ -207,14 +234,88 @@ struct Filesystem_Node
 		//remove the subpath
 		length = last_separator_pos;
 		path[length] = 0;
+		info_is_current = false;
 
 		if (should_update_info)
 			update_info();
 		return true;
 	}
+
+	bool is_qualified()
+	{
+		// if the path can't hold a qualifed path (e.g. "C:"), return false
+		if (length <= 2)
+			return false;
+
+		char c = path[0];
+
+		// if c is not a lowercase or capital letter @cleanup: ugly code
+		if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')))
+		{
+			// qualified paths (on windows at least), 
+			//   need to start with a drive letter
+			return false;
+		}
+
+		// drive letter must be followed immediately by a colon
+		if (path[1] != ':')
+			return false;
+		return true;
+	}
+
+	//void qualify(const char drive)
+
+	bool prepend(const char *relative_dir_name)
+	{
+		int param_length = strlen(relative_dir_name);
+		bool needs_separator = path_needs_separator();
+
+		int total_length = param_length + (needs_separator ? 1 : 0) + length; // @CLEANUP: I should probably just add the bool directly
+
+		if (total_length > MAX_PATH)
+		{
+			cerr << "Can't prepend path. New path wouldn't fit. This should never happen, and yet, here we are." << endl;
+			return false;
+		}
+
+		// preemptively invalidate info; it won't be accurate from here on out
+		info_is_current = false;
+
+		// backup the current path
+		char tmp[MAX_PATH + 1];
+		memcpy_s(tmp, MAX_PATH + 1, path, length);
+		int tmp_length = length;
+
+		// copy the prependee to path
+		memcpy_s(path, MAX_PATH + 1, relative_dir_name, param_length);
+		length = param_length;
+
+		// add separator if needed
+		if (needs_separator)
+		{
+			path[length] = '\\';
+			length++;
+		}
+
+		// copy the original path back
+		memcpy_s(&path[length], MAX_PATH + 1 - length, tmp, tmp_length);
+		length += tmp_length;
+
+		if (length != total_length)
+		{
+			cerr << "ERROR: I forgot to add something." << endl;
+			cerr << "Original total: " << total_length << endl;
+			cerr << "New total:      " << length << endl;
+			return false;
+		}
+		
+		// add null terminator
+		path[length] = 0;
+		return true;
+	}
 };
 
-void filesystem_node_test()
+void test_filesystem_node()
 {
 	Filesystem_Node node("C:\\dev");
 	node.print();
@@ -231,14 +332,18 @@ void filesystem_node_test()
 	node.pop();
 	node.print();
 
+	cout << endl;
+
 	//system("PAUSE");
 	//exit(0);
 }
 
 struct App_Settings
 {
-	string current_directory;
-	string backup_directory;
+	string current_dir;
+	string backup_dir;
+	string test_data_dir;
+	string test_data_source;
 };
 
 
@@ -428,6 +533,7 @@ u64 get_freespace_for(const char* directory)
 	GetDiskFreeSpace(drive_name, &sectors_per_cluster, &bytes_per_sector, &number_of_free_sectors, &total_number_of_clusters);
 	return (u64)number_of_free_sectors * (u64)bytes_per_sector;
 }
+
 /*
 bool relocate_file(const char* file_name, string &from, string &to)
 {
@@ -541,12 +647,12 @@ void print_current_directory()
 
 
 
-void get_current_directory(string &current_directory)
+void get_current_directory(string &current_dir)
 {
 	int directory_length = GetCurrentDirectory(0, 0);
 	char *cur_directory = (char*)malloc(directory_length * sizeof(char));
 	bool result = GetCurrentDirectory(directory_length, cur_directory);
-	current_directory = cur_directory;
+	current_dir = cur_directory;
 	free(cur_directory);
 }
 
@@ -792,6 +898,11 @@ return for_failed;
 
 bool delete_directory_recursive(string &directory)
 {
+	// @BUG: fails to delete "bak\test_data"
+	//   because test_data is empty?
+	//   error is 145: ERROR_DIR_NOT_EMPTY
+	//   assuming that's in reference to the attempt to delete "bak"
+
 	cout << "entering function for: " << directory << endl;
 	WIN32_FIND_DATA find_data;
 	HANDLE handle;
@@ -816,6 +927,7 @@ bool delete_directory_recursive(string &directory)
 				if (!(find_data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
 				{
 					if (!delete_directory_recursive(target))
+						FindClose(handle);
 						return false;
 				}
 
@@ -823,6 +935,7 @@ bool delete_directory_recursive(string &directory)
 				if (!RemoveDirectory(target.data()))
 				{
 					cout << "Failed to delete directory: '" << target << "'" << endl;
+					FindClose(handle);
 					return false;
 				}
 			}
@@ -832,6 +945,7 @@ bool delete_directory_recursive(string &directory)
 				if (!DeleteFile(target.data()))
 				{
 					cout << "Failed to delete file: '" << target << "'" << endl;
+					FindClose(handle);
 					return false;
 				}
 			}
@@ -846,9 +960,9 @@ bool delete_file_or_directory(string &target)
 	if (!starts_with_drive(target))
 	{
 		// path is relative; fully-qualify it with current directory
-		string current_directory;
-		get_current_directory(current_directory);
-		string tmp = current_directory;
+		string current_dir;
+		get_current_directory(current_dir);
+		string tmp = current_dir;
 		add_separator(tmp);
 		tmp.append(target);
 		target = tmp;
@@ -910,7 +1024,7 @@ void qualify_target_if_relative(string &target, App_Settings &settings)
 	{
 		// otherwise, qualify it
 		string qualified_dir;
-		qualified_dir = settings.current_directory;
+		qualified_dir = settings.current_dir;
 		add_separator(qualified_dir);
 		qualified_dir += target;
 		target = qualified_dir;
@@ -940,71 +1054,243 @@ Node_Type get_node_type(string &target, App_Settings &settings)
 	return node_type;
 }
 
-/*
+bool internal_relocate_target(Filesystem_Node &src_node, Filesystem_Node &dst_node)
+{
+	switch (src_node.type)
+	{
+	case nt_normal_file:
+		if (dst_node.exists)
+		{
+			cerr << "Error: File: " << dst_node.path << " already exists." << endl;
+			return false;
+		}
+		if (!CopyFile(src_node.path, dst_node.path, true))
+		{
+			cerr << "Failed to copy file" << endl;
+			cerr << "  " << src_node.path << endl;
+			cerr << "  " << dst_node.path << endl;
+			return false;
+		}
+		break;
+
+	case nt_normal_directory:
+	{
+		// copy directory
+		if (!CreateDirectory(dst_node.path, 0))
+		{
+			cerr << "Failed to create directory" << endl;
+			cerr << "  " << dst_node.path << endl;
+			return false;
+		}
+
+		// create search string
+		src_node.push("*", false);
+		WIN32_FIND_DATA data;
+		HANDLE handle = FindFirstFile(src_node.path, &data);
+		src_node.pop(false);
+
+		if (handle == INVALID_HANDLE_VALUE)
+		{
+			cerr << "empty directory?" << endl;
+			cerr << "  '" << src_node.path << "'" << endl;
+			break;
+		}
+
+		// skip "." directory
+		FindNextFile(handle, &data);
+
+		// skip ".." directory
+		FindNextFile(handle, &data);
+
+		do
+		{
+			// update the paths
+			src_node.push(data.cFileName);
+			dst_node.push(data.cFileName);
+
+			// throw everything into a recursive version of this function
+			if (!internal_relocate_target(src_node, dst_node))
+			{
+				// close the file before we return
+				FindClose(handle);
+				return false;
+			}
+
+		} while (FindNextFile(handle, &data));
+
+		FindClose(handle);
+	}
+		break;
+
+	case nt_symlink_file:
+	case nt_symlink_directory:
+	{
+		// these two cases are basically the same
+		int open_flag   = (src_node.type == nt_symlink_directory) ? FILE_FLAG_BACKUP_SEMANTICS   : FILE_ATTRIBUTE_NORMAL;
+		int create_flag = (src_node.type == nt_symlink_directory) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0; // <- intentional 0
+
+		// file is symlinked
+		// directory is symlinked
+		HANDLE linked_handle = CreateFile(
+			src_node.path,	 // file to open
+			GENERIC_READ,	 // open for reading
+			FILE_SHARE_READ, // share for reading
+			NULL,			 // default security
+			OPEN_EXISTING,	 // existing file only
+			open_flag,		 // open the target, not the link
+			NULL);			 // no attr. template)
+
+		if (linked_handle == INVALID_HANDLE_VALUE)
+		{
+			cout << "Could not open target. Error: " << GetLastError() << endl;
+			return false;
+		}
+
+		char path[MAX_PATH];
+		DWORD final_path_length = GetFinalPathNameByHandle(linked_handle, path, MAX_PATH, 0);
+		if (final_path_length >= MAX_PATH)
+		{
+			path[0] = 0;
+		}
+
+		CloseHandle(linked_handle);
+		if (path[0] == 0)
+		{
+			cout << "Failed to get target for symlink" << endl;
+			return false;
+		}
+
+		// @cleanup: this is literally a use of starts_with(), but on a cstring
+		const char* target_name = path;
+		if (final_path_length > 4)
+		{
+			if (path[0] == '\\' && path[1] == '\\' && path[2] == '?' && path[3] == '\\')
+			{
+				// name starts with '\\?\' take a pointer to the actual name
+				target_name = &path[4];
+			}
+		}
+
+		// target_name is now the location of the targeted file
+		auto result = CreateSymbolicLink(dst_node.path, target_name, create_flag);
+		if (result == 0)
+		{
+			cout << "Error creating symbolic link: " << GetLastError() << endl;
+		}
+	}
+		break;
+
+	default:
+		cout << "Unknown node type!" << endl;
+		return false;
+		break;
+	}
+
+	// pop the target off and return
+	src_node.pop(false);
+	dst_node.pop(false);
+
+	return true;
+}
+
+#include "misc.h"
+
+
 // moves the indicated file/folder to the backup_directory,
 //   makes an appropriate symlink where the target was located
 bool relocate_target(string &target, App_Settings &settings)
 {
-qualify_target_if_relative(target, settings);
-Node_Type node_type = get_node_type(target, settings);
+	const char *target_str = target.data();
 
-if (node_type == tt_symlink_directory || node_type == tt_symlink_file)
-{
-cout << "ERROR: target is a symbolic link." << endl;
-cout << "  Trying to backup '" << target << "' to '" << settings.backup_directory << "'" << endl;
-return false;
+	// create the paths here
+	Filesystem_Node src_node;
+	Filesystem_Node dst_node(settings.backup_dir.data(), false);
+
+	bool is_absolute = starts_with_drive(target_str);
+	if (is_absolute)
+	{
+		src_node = Filesystem_Node("", false);
+	}
+	else
+	{
+		src_node = Filesystem_Node(settings.current_dir.data(), false);
+	}
+
+	// append target names
+	src_node.push(target_str);
+	dst_node.push(target_str);
+
+
+	// check sizes of directories
+	// @cleanup: this shouldn't take a string anymore; it should take a node
+	string string_path = src_node.path;
+	u64 size_target_directory = get_size_of_directory(string_path);
+	u64 freespace_for_backup_directory = get_freespace_for(settings.backup_dir.data());
+
+	// check if the target will fit on the backup drive
+	if (size_target_directory >= freespace_for_backup_directory)
+	{
+		cout << "ERROR: target directory is larger than backup directory." << endl;
+		cout << "  This is either a bug, or you're out of harddrive space." << endl;
+		cout << "  Trying to backup '" << src_node.path << "' to '" << settings.backup_dir << "'" << endl;
+		string size;
+		get_best_size_for_bytes(size_target_directory, size);
+		cout << "  Size of target: " << size << endl;
+		get_best_size_for_bytes(freespace_for_backup_directory, size);
+		cout << "  Freespace left: " << size << endl;
+		return false;
+	}
+
+	// create the backup directory if it doesn't exist
+	{
+		creation_result result = create_directory(settings.backup_dir);
+		if (result == cr_failed)
+		{
+			cout << "Failed to create backup directory at: " << settings.backup_dir << endl;
+			cout << "ERROR: " << GetLastError() << endl;
+			return false;
+		}
+	}
+
+	//aaaaand, action!
+	bool success = internal_relocate_target(src_node, dst_node);
+
+	if (!success)
+	{
+		cerr << "FAILURE!" << endl;
+		return false;
+	}
+	else
+		cerr << "SUCCESS!" << endl;
+
+	// now, delete the previous tree
+
+	// and then, create a symbolic link
+
+
+
+
+	return true;
+	/*
+	if (node_type == tt_symlink_directory || node_type == tt_symlink_file)
+	{
+		cout << "ERROR: target is a symbolic link." << endl;
+		cout << "  Trying to backup '" << target << "' to '" << settings.backup_directory << "'" << endl;
+		return false;
+	}
+
+	cout << "Copying " << target << " to " << settings.backup_directory << "..." << endl;
+	string cur_path = settings.backup_directory;
+	bool success = copy_target_no_overwrite(target, node_type, cur_path, settings);
+
+	if (!success)
+	{
+		cout << "ERROR: Relocate failed. Details should be printed above." << endl;
+		return false;
+	
+	*/
 }
 
-// check sizes of directories
-u64 size_target_directory = get_size_of_directory(target);
-u64 freespace_for_backup_directory = get_freespace_for(settings.backup_directory.data());
-
-// check if the target will fit on the backup drive
-if (size_target_directory >= freespace_for_backup_directory)
-{
-cout << "ERROR: target directory is larger than backup directory." << endl;
-cout << "  This is either a bug, or you're out of harddrive space." << endl;
-cout << "  Trying to backup '" << target << "' to '" << settings.backup_directory << "'" << endl;
-string size;
-get_best_size_for_bytes(size_target_directory, size);
-cout << "  Size of target: " << size << endl;
-get_best_size_for_bytes(freespace_for_backup_directory, size);
-cout << "  Freespace left: " << size << endl;
-return false;
-}
-
-// create the backup directory if it doesn't exist
-{
-creation_result result = create_directory(settings.backup_directory);
-if (result == cr_failed)
-{
-cout << "Failed to create backup directory at: " << settings.backup_directory << endl;
-cout << "ERROR: " << GetLastError() << endl;
-return false;
-}
-}
-
-cout << "Copying " << target << " to " << settings.backup_directory << "..." << endl;
-string cur_path = settings.backup_directory;
-bool success = copy_target_no_overwrite(target, node_type, cur_path, settings);
-
-if (!success)
-{
-cout << "ERROR: Relocate failed. Details should be printed above." << endl;
-return false;
-}
-
-// @TODO: remove old directory here
-// Not doing that until I get the reverse working
-cout << endl;
-cout << "This is where I would remove the old directory: " << target << "," << endl;
-cout << "  But I don't have restoring yet, so I'm not gonna do that yet." << endl;
-cout << endl;
-
-// true enough for now
-return true;
-}
-*/
 
 /*
 bool restore_target(string &target, string &backup_directory)
@@ -1012,3 +1298,27 @@ bool restore_target(string &target, string &backup_directory)
 return false;
 }
 */
+
+void reset_test_data(App_Settings &settings)
+{
+	CreateSymbolicLink(
+		"C:\\dev\\test_data_source\\symdirtest", 
+		"C:\\dev\\test_data_source\\symtest", 
+		SYMBOLIC_LINK_FLAG_DIRECTORY);
+	
+	CreateSymbolicLink(
+		"C:\\dev\\test_data_source\\symtest\\test_b.txt",
+		"C:\\dev\\test_data_source\\test_b.txt",
+		0);
+	CreateSymbolicLink(
+		"C:\\dev\\test_data_source\\symtest\\test_d.txt",
+		"C:\\dev\\test_data_source\\test_d.txt",
+		0);
+	CreateSymbolicLink(
+		"C:\\dev\\test_data_source\\symtest\\DriveManager.exe",
+		"C:\\dev\\test_data_source\\DriveManager.exe",
+		0);
+
+	delete_file_or_directory(settings.test_data_dir);
+	
+}
