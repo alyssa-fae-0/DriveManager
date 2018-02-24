@@ -1319,6 +1319,6 @@ void reset_test_data(App_Settings &settings)
 		"C:\\dev\\test_data_source\\DriveManager.exe",
 		0);
 
-	delete_file_or_directory(settings.test_data_dir);
+	//delete_file_or_directory(settings.test_data_dir);
 	
 }
