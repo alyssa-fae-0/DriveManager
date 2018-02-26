@@ -79,16 +79,16 @@ int main(int argc, char *argv[])
 	settings.current_dir		= "C:\\dev";
 	settings.backup_dir			= "C:\\dev\\bak";
 	settings.test_data_dir		= "C:\\dev\\test_data";
-	settings.test_data_source	= "C:\\dev\\test_data_src";
+	settings.test_data_source	= "C:\\dev\\test_data_source";
 
-	SetCurrentDirectory(settings.current_dir.data());
+	SetCurrentDirectory(settings.current_dir.path.data());
 
 	test_filesystem_node();
 
 	while (should_run)
 	{
 
-		cout << settings.current_dir << ">";
+		cout << endl << settings.current_dir.path << ">";
 		std::getline(cin, input);
 
 		// tokenize the input
@@ -160,15 +160,15 @@ int main(int argc, char *argv[])
 				should_run = false;
 
 			// check for ls
-			else if (matches(tokens.tokens[0], "ls") || matches(tokens.tokens[0], "target"))
-				print_current_directory();
+			else if (matches(tokens.tokens[0], "ls") || matches(tokens.tokens[0], "dir"))
+				print_current_directory(settings);
 
 			// check for size command
 			else if (matches(tokens.tokens[0], "size"))
 			{
 				if (tokens.num_tokens == 1)
 				{
-					cout << "Size of current dirrectory: " << get_size_of_directory(settings.current_dir) << endl;
+					cout << "Size of current dirrectory: " << get_size_of_directory(settings.current_dir.path) << endl;
 				}
 				else if (tokens.num_tokens == 2)
 				{
@@ -183,14 +183,59 @@ int main(int argc, char *argv[])
 			{
 				if (tokens.num_tokens == 2)
 				{
-					char *new_directory = to_string(tokens.tokens[1]);
-					cout << "new directory: \"" << new_directory << "\"" << endl;
-					if (SetCurrentDirectory(new_directory))
+					//@bug: can't cd "c:\" or pop from c:\dev
+					if (matches(tokens.tokens[1], ".."))
 					{
-						get_current_directory(settings.current_dir);
+						settings.current_dir.pop();
+						if (!SetCurrentDirectory(settings.current_dir.path.data()))
+						{
+							cerr << "Can't cd to: " << settings.current_dir.path << endl;
+							auto error = GetLastError();
+							cerr << "Reason: ";
+							switch (error)
+							{
+							case ERROR_FILE_NOT_FOUND:
+								cerr << "File not found." << endl;
+								break;
+							case ERROR_PATH_NOT_FOUND:
+								cerr << "Path not found." << endl;
+							default:
+								cerr << "Unknown error: " << error << endl;
+							}
+						}
+					}
+					else
+					{
+						Filesystem_Node dir;
+						to_string(tokens.tokens[1], dir.path);
+
+						if (!dir.is_qualified())
+						{
+							dir.prepend(settings.current_dir.path.data());
+						}
+
+						if (SetCurrentDirectory(dir.path.data()))
+						{
+							settings.current_dir = dir;
+						}
+						else
+						{
+							cerr << "Can't cd to: " << dir.path << endl;
+							auto error = GetLastError();
+							cerr << "Reason: ";
+							switch (error)
+							{
+							case ERROR_FILE_NOT_FOUND:
+								cerr << "File not found." << endl;
+								break;
+							case ERROR_PATH_NOT_FOUND:
+								cerr << "Path not found." << endl;
+							default:
+								cerr << "Unknown error: " << error << endl;
+							}
+						}
 					}
 
-					free(new_directory);
 				}
 			}
 
@@ -220,14 +265,19 @@ int main(int argc, char *argv[])
 				{
 					string dir;
 					to_string(tokens.tokens[1], dir);
-					// doesn't work currently; kind of afraid to debug it
-					delete_file_or_directory(dir);
+					delete_node(dir, settings, true);
 				}
 			}
 
 			else if (matches(tokens.tokens[0], "reset"))
 			{
 				reset_test_data(settings);
+			}
+
+			else if (matches(tokens.tokens[0], "test"))
+			{
+				Filesystem_Node node("C:\\dev\\del");
+				delete_node_recursive(node);
 			}
 
 		}

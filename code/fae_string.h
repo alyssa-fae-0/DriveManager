@@ -5,51 +5,6 @@
 #include <string>
 using std::string;
 
-//struct fae_string
-//{
-//	// a pointer to the dynamically allocated memory; the memory itself may be relocated periodically as the string grows
-//	//   so always store a pointer to a fae_string rather than a pointer to the data itself
-//	char *data;
-//
-//	// the number of characters that can fit in "data".
-//	//   this value does not include the implicit null-terminator,
-//	//   so a capacity of 10 characters will take up 11 characters in memory
-//	int capacity;
-//
-//	// the current number of characters in data; this number should always be equal to 
-//	//   the value that you would get for calling strlen(data)
-//	int length;
-//
-//	// default non-allocating constructor
-//	fae_string()
-//	{
-//		data = null;
-//		capacity = 0;
-//		length = 0;
-//	}
-//	
-//
-//	// cstring copy constructor
-//	fae_string(const char *text)
-//	{
-//		int text_len = strlen(text);
-//		capacity = 0;
-//		length = 0;
-//
-//		data = (char*)malloc(text_len + 1);
-//		strcpy_s(data, text_len + 1, text);
-//	}
-//
-//	// default destructor
-//	~fae_string()
-//	{
-//		if (data != null)
-//		{
-//			free(data);
-//		}
-//	}
-//};
-
 struct Slice
 {
 	const char *str;
@@ -95,22 +50,6 @@ bool matches(Slice a, Slice b)
 	}
 	return true;
 }
-
-/*bool matches(const char* a, const char* b)
-{
-	int a_len = strlen(a);
-	int b_len = strlen(b);
-	if (a_len != b_len)
-		return false;
-	for (int i = 0; i < a_len; i++)
-	{
-		if (a[i] != b[i])
-		{
-			return false;
-		}
-	}
-	return true;
-}*/
 
 bool ends_with(string &str, const char *target)
 {
