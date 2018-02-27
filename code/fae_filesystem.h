@@ -14,12 +14,27 @@ using std::cin;
 
 enum Node_Type
 {
-	nt_normal_file = 0,
-	nt_normal_directory = 1,
-	nt_symlink_file = 2,
-	nt_symlink_directory = 3,
-	nt_error = -1
+	nt_error = -1,
+	nt_not_exist = 0,
+	nt_normal_file = 1,
+	nt_normal_directory = 2,
+	nt_symlink_file = 3,
+	nt_symlink_directory = 4
 };
+
+Node_Type get_node_type(string &path)
+{
+	WIN32_FIND_DATA data;
+	HANDLE handle = FindFirstFile(path.data(), &data);
+	Node_Type type = nt_error;
+	if (handle == INVALID_HANDLE_VALUE)
+	{
+		return nt_not_exist;
+	}
+	type = get_node_type(data);
+	FindClose(handle);
+	return type;
+}
 
 Node_Type get_node_type(WIN32_FIND_DATA &data)
 {
@@ -63,7 +78,7 @@ struct Filesystem_Node
 		type = nt_error;
 		info_is_current = false;
 		path = param_path;
-		if(should_update)
+		//if(should_update)
 			update_info();
 	}
 
@@ -73,15 +88,14 @@ struct Filesystem_Node
 		exists = false;
 		type = nt_error;
 		info_is_current = false;
-		Filesystem_Node();
 		path = param_path;
-		if(should_update)
+		//if(should_update)
 			update_info();
 	}
 
 	void print()
 	{
-		if (!info_is_current)
+		//if (!info_is_current)
 			update_info();
 		cout << "Path: '" << path << "', exists: ";
 		if (exists)
@@ -133,11 +147,11 @@ struct Filesystem_Node
 
 	void update_info()
 	{
-		if (info_is_current)
-		{
-			cerr << "Error: call to update_info, but info should already be current." << endl;
-			return;
-		}
+		//if (info_is_current)
+		//{
+		//	cerr << "Error: call to update_info, but info should already be current." << endl;
+		//	return;
+		//}
 
 		WIN32_FIND_DATA data;
 		HANDLE handle = FindFirstFile(path.data(), &data);
@@ -150,6 +164,7 @@ struct Filesystem_Node
 		{
 			exists = true;
 			type = get_node_type(data);
+			FindClose(handle);
 		}
 		info_is_current = true;
 	}
@@ -199,7 +214,7 @@ struct Filesystem_Node
 		// add subpath
 		path.append(subpath);
 
-		if (should_update_info)
+		//if (should_update_info)
 			update_info();
 		return true;
 	}
@@ -246,7 +261,7 @@ struct Filesystem_Node
 		path.erase(iter, path.end());
 		info_is_current = false;
 
-		if (should_update_info)
+		//if (should_update_info)
 			update_info();
 		return true;
 	}
@@ -297,6 +312,8 @@ struct Filesystem_Node
 
 		// copy the whole thing back
 		path = rel_str;
+
+		update_info();
 
 		return true;
 	}
@@ -382,14 +399,19 @@ enum creation_result
 
 creation_result create_directory(string &directory_path)
 {
-	WIN32_FIND_DATA file_data;
-	HANDLE file_handle = FindFirstFile(directory_path.data(), &file_data);
-
-	// check for the directory
-	if (file_handle != INVALID_HANDLE_VALUE)
+	bool exists = false;
 	{
-		//cout << "Directory '" << directory_path << "' already exists." << endl;
-		return cr_existed;
+		WIN32_FIND_DATA file_data;
+		HANDLE handle = FindFirstFile(directory_path.data(), &file_data);
+
+		// check for the directory
+		if (handle != INVALID_HANDLE_VALUE)
+		{
+			//cout << "Directory '" << directory_path << "' already exists." << endl;
+			FindClose(handle);
+			return cr_existed;
+		}
+		FindClose(handle);
 	}
 
 	// create the directory
@@ -437,7 +459,9 @@ creation_result create_directory(string &directory_path)
 		}
 		free(tmp);
 		if (success)
+		{
 			return cr_created;
+		}
 	}
 
 	//cout << "Directory '" << directory_path << "' failed to create." << endl;
@@ -454,46 +478,6 @@ u64 get_freespace_for(const char* directory)
 	GetDiskFreeSpace(drive_name, &sectors_per_cluster, &bytes_per_sector, &number_of_free_sectors, &total_number_of_clusters);
 	return (u64)number_of_free_sectors * (u64)bytes_per_sector;
 }
-
-/*
-bool relocate_file(const char* file_name, string &from, string &to)
-{
-string file = from + "/" + file_name;
-string new_file = to + "/" + file_name;
-
-u64 freespace_on_drive_from = get_freespace_for(from.data());
-u64 freespace_on_drive_to   = get_freespace_for(to.data());
-
-WIN32_FIND_DATA file_data;
-HANDLE file_handle = FindFirstFile(file.data(), &file_data);
-
-LARGE_INTEGER li_file_size;
-li_file_size.HighPart = file_data.nFileSizeHigh;
-li_file_size.LowPart = file_data.nFileSizeLow;
-u64 file_size = (u64)li_file_size.QuadPart;
-
-
-// copy file to new directory
-file_operation_result result = copy_file_no_overwrite(file, new_file);
-if (result == for_copied)
-{
-// delete old copy of file
-if (!DeleteFile(file.data()))
-return false;
-
-// create symlink
-if (!CreateSymbolicLink(file.data(), new_file.data(), 0))
-{
-for(int i = 0; i < 30; i++)
-cout << "HEY! RUN VISUAL STUDIO IN ADMINISTRATOR MODE, YA GOOF!" << endl;
-return false;
-}
-return true;
-}
-return false;
-}
-*/
-
 
 
 u64 get_size_of_directory(string &directory_name)
@@ -546,6 +530,7 @@ u64 get_size_of_directory(string &directory_name)
 			//cout << "  file is a symlink'd file." << endl;
 		}
 	} while (FindNextFile(handle, &data));
+	FindClose(handle);
 	return directory_size;
 }
 
@@ -553,10 +538,14 @@ u64 get_size_of_directory(string &directory_name)
 
 void print_current_directory(App_Settings &settings)
 {
-	WIN32_FIND_DATA file_data;
-	HANDLE file_handle = FindFirstFile("*", &file_data);
 
 	Filesystem_Node cur = settings.current_dir;
+	cur.push("*");
+
+	WIN32_FIND_DATA file_data;
+	HANDLE file_handle = FindFirstFile(cur.path.data(), &file_data);
+	cur.pop();
+
 	do
 	{
 		cur.push(file_data.cFileName);
@@ -589,20 +578,29 @@ void print_current_directory(App_Settings &settings)
 		cur.pop();
 
 	} while (FindNextFile(file_handle, &file_data));
+	FindClose(file_handle);
 }
 
 bool delete_node_recursive(Filesystem_Node &node)
 {
+	Node_Type type = node.type;
+	node.update_info();
+	if (node.type != type)
+	{
+		cout << "Found you." << endl;
+	}
 	bool delete_directory = false;
 
 	if (node.type == nt_normal_directory)
 	{
 		// compose search string
 		node.push("*", false);
-		WIN32_FIND_DATA data;
-		HANDLE handle = FindFirstFile(node.path.data(), &data);
+		string search_term = node.path;
 		node.pop();
-		
+
+		WIN32_FIND_DATA data;
+		HANDLE handle = FindFirstFile(search_term.data(), &data);
+		cout << "Search term: " << search_term << endl;
 
 		if (handle != INVALID_HANDLE_VALUE)
 		{
@@ -622,8 +620,13 @@ bool delete_node_recursive(Filesystem_Node &node)
 					// delete each result
 					node.push(data.cFileName);
 					error = !delete_node_recursive(node);
+					// ^ directory can't be deleted until the handl in this stack frame closes...
+					//verify that I can't delete a directory that has a findnextfile handle open
+
 					if (error)
 					{
+						cerr << "Error deleting: " << node.path << endl;
+						cerr << "Error: " << GetLastError() << endl;
 						FindClose(handle);
 						return false;
 					}
@@ -642,7 +645,7 @@ bool delete_node_recursive(Filesystem_Node &node)
 		}
 		else
 		{
-			cerr << "Searching inside: " << node.path << " failed." << endl;
+			cerr << "Search for: " << search_term << " failed." << endl;
 			return false;
 		}
 	}
@@ -650,11 +653,15 @@ bool delete_node_recursive(Filesystem_Node &node)
 	// delete empty directory / symlinked directory
 	if (node.type == nt_symlink_directory || delete_directory)
 	{
+		// apparently this marks a directory for deletion upon close. So if it doesn't get deleted
+		//   that means that someone still has a handle to it...
 		if (!RemoveDirectory(node.path.data()))
 		{
 			cerr << "Failed to delete directory: " << node.path << endl;
 			return false;
 		}
+		
+
 		return true;
 	}
 
@@ -740,6 +747,12 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 			cerr << "  " << dst_node.path << endl;
 			return false;
 		}
+		else
+		{
+			// copy successful
+			src_node.update_info();
+			dst_node.update_info();
+		}
 		break;
 
 	case nt_normal_directory:
@@ -749,7 +762,13 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 		{
 			cerr << "Failed to create directory" << endl;
 			cerr << "  " << dst_node.path << endl;
+			cerr << "  Error: " << GetLastError() << endl;
 			return false;
+		}
+		else
+		{
+			// creation successful
+			dst_node.update_info();
 		}
 
 		// create search string
@@ -771,6 +790,7 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 		// skip ".." directory
 		FindNextFile(handle, &data);
 
+		bool error = false;
 		do
 		{
 			// update the paths
@@ -778,7 +798,11 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 			dst_node.push(data.cFileName);
 
 			// throw everything into a recursive version of this function
-			if (!copy_node_recursive(src_node, dst_node))
+			error = !copy_node_recursive(src_node, dst_node);
+			src_node.pop();
+			dst_node.pop();
+
+			if(error)
 			{
 				// close the file before we return
 				FindClose(handle);
@@ -845,7 +869,12 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 		auto result = CreateSymbolicLink(dst_node.path.data(), target_name, create_flag);
 		if (result == 0)
 		{
-			cout << "Error creating symbolic link: " << GetLastError() << endl;
+			cout << "Error creating symbolic link_name: " << GetLastError() << endl;
+		}
+		else
+		{
+			// symbolic link created successfully
+			dst_node.update_info();
 		}
 	}
 		break;
@@ -856,39 +885,48 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 		break;
 	}
 
-	// pop the target off and return
-	src_node.pop(false);
-	dst_node.pop(false);
-
 	return true;
 }
 
 #include "misc.h"
 
-
-// moves the indicated file/folder to the backup_directory,
-//   makes an appropriate symlink where the target was located
-bool relocate_target(string &target, App_Settings &settings)
+bool create_symlink(const char *link_name, const char *target_name, bool directory)
 {
-	const char *target_str = target.data();
-
-	// create the paths here
-	Filesystem_Node src_node;
-	Filesystem_Node dst_node(settings.backup_dir.path.data(), false);
-
-	bool is_absolute = starts_with_drive(target_str);
-	if (is_absolute)
+	if (CreateSymbolicLink(link_name, target_name, (directory) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0))
 	{
-		src_node = Filesystem_Node("", false);
+		cout << "Created symlink: " << target_name << endl << "  pointing to: " << link_name << endl;
+		return true;
 	}
 	else
 	{
-		src_node = Filesystem_Node(settings.current_dir.path.data(), false);
+		cout << "Failed to create symlink: " << target_name << endl << "  pointing to: " << link_name << endl;
+		auto error = GetLastError();
+		if (error == ERROR_ALREADY_EXISTS)
+			cout << "  Reason: File already existed." << endl;
+		else
+			cout << "  Unknown error: " << error << endl;
+		return false;
 	}
+}
 
-	// append target names
-	src_node.push(target_str);
-	dst_node.push(target_str);
+// moves the indicated file/folder to the backup_directory,
+//   makes an appropriate symlink where the target was located
+bool relocate_node(string &target_path, App_Settings &settings)
+{
+	// create source node
+	Filesystem_Node src_node(target_path);
+	if (!src_node.is_qualified())
+		src_node.prepend(settings.current_dir.path.data());
+
+	// create backup node
+	Filesystem_Node dst_node(settings.backup_dir.path.data(), false);
+	dst_node.push(target_path.data());
+
+	// only accept normal directories. For now.
+	if (src_node.type != nt_normal_directory)
+	{
+		cerr << "Only normal directories can be relocated. So far." << endl;
+	}
 
 
 	// check sizes of directories
@@ -920,6 +958,8 @@ bool relocate_target(string &target, App_Settings &settings)
 			cout << "ERROR: " << GetLastError() << endl;
 			return false;
 		}
+		else
+			settings.backup_dir.update_info();
 	}
 
 	//aaaaand, action!
@@ -927,16 +967,37 @@ bool relocate_target(string &target, App_Settings &settings)
 
 	if (!success)
 	{
-		cerr << "FAILURE!" << endl;
+		cerr << "Failed to copy : " << endl;
+		cerr << "  " << src_node.path << " to: " << endl;
+		cerr << "  " << dst_node.path << endl;
 		return false;
 	}
 	else
-		cerr << "SUCCESS!" << endl;
+	{
+		cerr << "copy successful" << endl;
+		src_node.update_info();
+		dst_node.update_info();
+	}
 
 	// now, delete the previous tree
+	delete_node_recursive(src_node);
 
 	// and then, create a symbolic link
+	success = create_symlink(src_node.path.data(), dst_node.path.data(), true);
 
+
+	if (!success)
+	{
+		cerr << "Failed to create symlink:" << endl;
+		cerr << "  " << src_node.path.data() << " to:" << endl;
+		cerr << "  " << dst_node.path.data() << endl;
+	}
+	else
+	{
+		src_node.update_info();
+		dst_node.update_info();
+		cout << "Successfully created symlink" << endl;
+	}
 
 
 
@@ -969,30 +1030,36 @@ return false;
 }
 */
 
-void create_symlink(const char *link, const char *real, bool directory)
-{
-	if (CreateSymbolicLink(real, link, (directory) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0))
-	{
-		cout << "Created symlink: " << real << endl << "  pointing to: " << link << endl;
-	}
-	else
-	{
-		cout << "Failed to create symlink: " << real << endl << "  pointing to: " << link << endl;
-		auto error = GetLastError();
-		if (error == ERROR_ALREADY_EXISTS)
-			cout << "  Reason: File already existed." << endl;
-		else
-			cout << "  Unknown error: " << error << endl;
-	}
-}
+
 
 void reset_test_data(App_Settings &settings)
 {
+	cout << "Resetting test data" << endl;
+	//settings.current_dir.update_info();
+	//settings.backup_dir.update_info();
+	//settings.test_data_dir.update_info();
+	//settings.test_data_source.update_info();
+
+	// delete backup_dir
+	if (settings.backup_dir.exists)
+	{
+		cout << "Deleting backup dir" << endl;
+		delete_node_recursive(settings.backup_dir);
+	}
+	else
+		cout << "Skipping backup dir because it doesn't exist" << endl;
+
 	// delete test_data
-	if(settings.test_data_dir.exists)
+	if (settings.test_data_dir.exists)
+	{
+		cout << "Deleting test dir" << endl;
 		delete_node_recursive(settings.test_data_dir);
+	}
+	else
+		cout << "Skipping test dir because it doesn't exist" << endl;
 
 	// copy test_data_source to test_data
+	cout << "Copying test_data" << endl;
 	copy_node_recursive(settings.test_data_source, settings.test_data_dir);
 
 	/*

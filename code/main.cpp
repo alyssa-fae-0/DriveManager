@@ -39,7 +39,6 @@ using std::cin;
 	Add auto-complete to the driver/pseudo-terminal 
 		(probably need to do a graphics-based custom console for that)
 	Better "/" and "\" checking for get_size_of_directory()
-	Update string functions to work on slices
 	@Robustness? Add function for checking if files are identical, once I add file processing
 	@Robustness Add error handling for invalid files in get_size_of_directory()
 	@Bug Figure out why I can't "cd c:\" but I can "cd c:\dev"
@@ -245,7 +244,7 @@ int main(int argc, char *argv[])
 				{
 					string target;
 					to_string(tokens.tokens[1], target);
-					relocate_target(target, settings);
+					relocate_node(target, settings);
 				}
 			}
 
