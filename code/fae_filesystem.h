@@ -23,6 +23,38 @@ enum Node_Type
 	nt_end_types
 };
 
+string name(Node_Type type)
+{
+	switch (type)
+	{
+	case nt_error:
+		return "'Error'";
+		break;
+	case nt_not_exist:
+		return "'Non-Existant'";
+		break;
+	case nt_normal_file:
+		return "'Normal File'";
+		break;
+	case nt_normal_directory:
+		return "'Normal Directory'";
+		break;
+	case nt_symlink_file:
+		return "'Symbolic Linked File'";
+		break;
+	case nt_symlink_directory:
+		return "'Symbolic Linked Directory'";
+		break;
+	case nt_end_types:
+		return "ERROR INVALID TYPE";
+		break;
+	default:
+		return "ERROR INVALID TYPE";
+		break;
+	}
+	return "ERROR INVALID TYPE";
+}
+
 bool exists(Node_Type type)
 {
 	return type > nt_not_exist && type < nt_end_types;
@@ -295,6 +327,53 @@ void test_filesystem_node()
 
 	//system("PAUSE");
 	//exit(0);
+}
+
+string get_target_of_symlink(string &link_path, Node_Type link_type)
+{
+	int open_flag = (link_type == nt_symlink_directory) ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL;																					 // file is 
+
+	HANDLE linked_handle = CreateFile(
+		link_path.data(),	 // file to open
+		GENERIC_READ,	 // open for reading
+		FILE_SHARE_READ, // share for reading
+		NULL,			 // default security
+		OPEN_EXISTING,	 // existing file only
+		open_flag,		 // open the target, not the link
+		NULL);			 // no attr. template)
+
+	if (linked_handle == INVALID_HANDLE_VALUE)
+	{
+		cout << "Could not open link. Error: " << GetLastError() << endl;
+		return false;
+	}
+
+	char path[MAX_PATH];
+	DWORD final_path_length = GetFinalPathNameByHandle(linked_handle, path, MAX_PATH, 0);
+	if (final_path_length >= MAX_PATH)
+	{
+		path[0] = 0;
+	}
+
+	CloseHandle(linked_handle);
+	if (path[0] == 0)
+	{
+		cout << "Failed to get link for symlink" << endl;
+		return false;
+	}
+
+	// @cleanup: this is literally a use of starts_with(), but on a cstring
+	const char* target_name = path;
+	if (final_path_length > 4)
+	{
+		if (path[0] == '\\' && path[1] == '\\' && path[2] == '?' && path[3] == '\\')
+		{
+			// name starts with '\\?\' take a pointer to the actual name
+			target_name = &path[4];
+		}
+	}
+
+	return string(target_name);
 }
 
 struct App_Settings
@@ -639,9 +718,9 @@ bool delete_node(string &target, App_Settings &settings, bool confirm_with_user 
 		node.prepend(settings.current_dir.path.data());
 
 	auto node_type = node.get_type();
-	if (exists(node_type))
+	if (!exists(node_type))
 	{
-		cerr << "The target: " << target << " doesn't exist. Failed to delete.";
+		cerr << "The node: " << target << " doesn't exist. Failed to delete.";
 	}
 
 	if (confirm_with_user)
@@ -762,53 +841,11 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 	case nt_symlink_directory:
 	{
 		// these two cases are basically the same
-		int open_flag   = (src_type == nt_symlink_directory) ? FILE_FLAG_BACKUP_SEMANTICS   : FILE_ATTRIBUTE_NORMAL;
-		int create_flag = (src_type == nt_symlink_directory) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0; // <- intentional 0
+		int create_flag = (src_type == nt_symlink_directory) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0; // <- intentional 0	
 
-		// file is symlinked
-		// directory is symlinked
-		HANDLE linked_handle = CreateFile(
-			src_node.path.data(),	 // file to open
-			GENERIC_READ,	 // open for reading
-			FILE_SHARE_READ, // share for reading
-			NULL,			 // default security
-			OPEN_EXISTING,	 // existing file only
-			open_flag,		 // open the target, not the link
-			NULL);			 // no attr. template)
+		string target_path = get_target_of_symlink(src_node.path, src_type);
 
-		if (linked_handle == INVALID_HANDLE_VALUE)
-		{
-			cout << "Could not open target. Error: " << GetLastError() << endl;
-			return false;
-		}
-
-		char path[MAX_PATH];
-		DWORD final_path_length = GetFinalPathNameByHandle(linked_handle, path, MAX_PATH, 0);
-		if (final_path_length >= MAX_PATH)
-		{
-			path[0] = 0;
-		}
-
-		CloseHandle(linked_handle);
-		if (path[0] == 0)
-		{
-			cout << "Failed to get target for symlink" << endl;
-			return false;
-		}
-
-		// @cleanup: this is literally a use of starts_with(), but on a cstring
-		const char* target_name = path;
-		if (final_path_length > 4)
-		{
-			if (path[0] == '\\' && path[1] == '\\' && path[2] == '?' && path[3] == '\\')
-			{
-				// name starts with '\\?\' take a pointer to the actual name
-				target_name = &path[4];
-			}
-		}
-
-		// target_name is now the location of the targeted file
-		auto result = CreateSymbolicLink(dst_node.path.data(), target_name, create_flag);
+		auto result = CreateSymbolicLink(dst_node.path.data(), target_path.data(), create_flag);
 		if (result == 0)
 		{
 			cout << "Error creating symbolic link_name: " << GetLastError() << endl;
@@ -878,12 +915,12 @@ bool relocate_node(string &target_path, App_Settings &settings)
 	// check if the target will fit on the backup drive
 	if (size_target_directory >= freespace_for_backup_directory)
 	{
-		cout << "ERROR: target directory is larger than backup directory." << endl;
+		cout << "ERROR: link directory is larger than backup directory." << endl;
 		cout << "  This is either a bug, or you're out of harddrive space." << endl;
 		cout << "  Trying to backup '" << src_node.path << "' to '" << settings.backup_dir.path << "'" << endl;
 		string size;
 		get_best_size_for_bytes(size_target_directory, size);
-		cout << "  Size of target: " << size << endl;
+		cout << "  Size of link: " << size << endl;
 		get_best_size_for_bytes(freespace_for_backup_directory, size);
 		cout << "  Freespace left: " << size << endl;
 		return false;
@@ -891,13 +928,13 @@ bool relocate_node(string &target_path, App_Settings &settings)
 
 	// create the backup directory if it doesn't exist
 	{
-		creation_result result = create_directory(settings.backup_dir.path);
-		if (result == cr_failed)
-		{
-			cout << "Failed to create backup directory at: " << settings.backup_dir.path << endl;
-			cout << "ERROR: " << GetLastError() << endl;
-			return false;
-		}
+creation_result result = create_directory(settings.backup_dir.path);
+if (result == cr_failed)
+{
+	cout << "Failed to create backup directory at: " << settings.backup_dir.path << endl;
+	cout << "ERROR: " << GetLastError() << endl;
+	return false;
+}
 	}
 
 	//aaaaand, action!
@@ -929,36 +966,86 @@ bool relocate_node(string &target_path, App_Settings &settings)
 	else
 		cout << "Successfully created symlink" << endl;
 
-
-
 	return true;
-	/*
-	if (node_type == tt_symlink_directory || node_type == tt_symlink_file)
+}
+
+
+
+bool restore_node(string &link, App_Settings &settings)
+{
+	// check if link is actually a symlink
+	auto link_type = get_node_type(link);
+
+	if (link_type != nt_symlink_directory && link_type != nt_symlink_file)
 	{
-		cout << "ERROR: target is a symbolic link." << endl;
-		cout << "  Trying to backup '" << target << "' to '" << settings.backup_directory << "'" << endl;
+		cerr << "Error: " << link << " is not a symlink." << endl;
 		return false;
 	}
 
-	cout << "Copying " << target << " to " << settings.backup_directory << "..." << endl;
-	string cur_path = settings.backup_directory;
-	bool success = copy_target_no_overwrite(target, node_type, cur_path, settings);
+	Filesystem_Node link_node = Filesystem_Node(link);
+	if (!link_node.is_qualified())
+		link_node.prepend(settings.current_dir.path.data());
+	//update the link_path_string
+	link = link_node.path;
 
-	if (!success)
+	string target_path = get_target_of_symlink(link_node.path, link_type);
+	Filesystem_Node target_node = Filesystem_Node(target_path);
+	auto target_type = target_node.get_type();
+
+	// sanity check
+	if ((link_type == nt_symlink_directory && target_type != nt_normal_directory) ||
+		(link_type == nt_symlink_file && target_type != nt_normal_file))
 	{
-		cout << "ERROR: Relocate failed. Details should be printed above." << endl;
+		cerr << "Link type:   " << name(link_type) << endl;
+		cerr << "Target type: " << name(target_type) << endl;
+	}
+
+	// check if the drive for link has the space for the target file/directory
+
+	// check sizes of directories
+	// @cleanup: this shouldn't take a string anymore; it should take a node
+	u64 size_target_directory = get_size_of_directory(target_path);
+	u64 freespace = get_freespace_for(link.data());
+
+	// check if the target will fit on the backup drive
+	if (size_target_directory >= freespace)
+	{
+		cout << "Not enough freespace." << endl;
+		string size;
+		get_best_size_for_bytes(size_target_directory, size);
+		cout << "  Size of target: " << size << endl;
+		get_best_size_for_bytes(freespace, size);
+		cout << "  Freespace left: " << size << endl;
 		return false;
-	
-	*/
+	}
+
+	// delete link
+	if (!delete_node(link, settings, false))
+	{
+		cout << "Failed to delete node: " << link << endl;
+		cout << "  Type: " << name(link_node.get_type()) << endl;
+		return false;
+	}
+
+	// copy target back to link's old location
+	if(!copy_node_recursive(target_node, link_node))
+	{
+		cout << "Failed to copy: " << target_node.path << endl;
+		cout << "  to: " << link_node.path << endl;
+		return false;
+	}
+
+	// delete the data from the old location
+	if (!delete_node(target_node.path, settings, false))
+	{
+		cout << "Failed to delete node from old location: " << target_node.path << endl;
+		cout << "  Type: " << name(target_node.get_type()) << endl;
+		return false;
+	}
+
+	return true;
 }
 
-
-/*
-bool restore_target(string &target, string &backup_directory)
-{
-return false;
-}
-*/
 
 
 

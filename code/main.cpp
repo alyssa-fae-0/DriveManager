@@ -254,7 +254,7 @@ int main(int argc, char *argv[])
 				{
 					string target;
 					to_string(tokens.tokens[1], target);
-					//restore_target(target, settings.backup_directory);
+					restore_node(target, settings);
 				}
 			}
 
