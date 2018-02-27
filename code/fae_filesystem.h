@@ -15,25 +15,17 @@ using std::cin;
 enum Node_Type
 {
 	nt_error = -1,
-	nt_not_exist = 0,
-	nt_normal_file = 1,
-	nt_normal_directory = 2,
-	nt_symlink_file = 3,
-	nt_symlink_directory = 4
+	nt_not_exist,
+	nt_normal_file,
+	nt_normal_directory,
+	nt_symlink_file,
+	nt_symlink_directory,
+	nt_end_types
 };
 
-Node_Type get_node_type(string &path)
+bool exists(Node_Type type)
 {
-	WIN32_FIND_DATA data;
-	HANDLE handle = FindFirstFile(path.data(), &data);
-	Node_Type type = nt_error;
-	if (handle == INVALID_HANDLE_VALUE)
-	{
-		return nt_not_exist;
-	}
-	type = get_node_type(data);
-	FindClose(handle);
-	return type;
+	return type > nt_not_exist && type < nt_end_types;
 }
 
 Node_Type get_node_type(WIN32_FIND_DATA &data)
@@ -56,51 +48,49 @@ Node_Type get_node_type(WIN32_FIND_DATA &data)
 	}
 }
 
+Node_Type get_node_type(string &path)
+{
+	WIN32_FIND_DATA data;
+	HANDLE handle = FindFirstFile(path.data(), &data);
+	Node_Type type = nt_error;
+	if (handle == INVALID_HANDLE_VALUE)
+	{
+		return nt_not_exist;
+	}
+	type = get_node_type(data);
+	FindClose(handle);
+	return type;
+}
+
 struct Filesystem_Node
 {
 	string path;
-	bool info_is_current;
-	bool exists;
-	Node_Type type;
 
 	// create empty filesystem_node
 	Filesystem_Node()
 	{
-		exists = false;
-		type = nt_error;
-		info_is_current = false;
+		path = string();
 	}
 
 	// create filesystem_node from param_path
-	Filesystem_Node(const char *param_path, bool should_update = true)
+	Filesystem_Node(const char *param_path)
 	{
-		exists = false;
-		type = nt_error;
-		info_is_current = false;
 		path = param_path;
-		//if(should_update)
-			update_info();
 	}
 
 	// create filesystem_node from param_path
-	Filesystem_Node(string &param_path, bool should_update = true)
+	Filesystem_Node(string &param_path)
 	{
-		exists = false;
-		type = nt_error;
-		info_is_current = false;
 		path = param_path;
-		//if(should_update)
-			update_info();
 	}
 
 	void print()
 	{
-		//if (!info_is_current)
-			update_info();
+		auto type = get_type();
 		cout << "Path: '" << path << "', exists: ";
-		if (exists)
+		if (type != nt_not_exist)
 		{
-			cout << "true, type: ";
+			cout << "true, node_type: ";
 			switch (type)
 			{
 			case nt_normal_file:
@@ -119,7 +109,7 @@ struct Filesystem_Node
 				cout << "error. This shouldn't ever be printed";
 				break;
 			default:
-				cout << "unknown type. This shouldn't ever be true";
+				cout << "unknown node_type. This shouldn't ever be true";
 				break;
 			}
 		}
@@ -145,31 +135,12 @@ struct Filesystem_Node
 		return (length == 0 || path_ends_in_separator()) ? false : true;
 	}
 
-	void update_info()
+	Node_Type get_type()
 	{
-		//if (info_is_current)
-		//{
-		//	cerr << "Error: call to update_info, but info should already be current." << endl;
-		//	return;
-		//}
-
-		WIN32_FIND_DATA data;
-		HANDLE handle = FindFirstFile(path.data(), &data);
-		if (handle == INVALID_HANDLE_VALUE)
-		{
-			exists = false;
-			type = nt_error;
-		}
-		else
-		{
-			exists = true;
-			type = get_node_type(data);
-			FindClose(handle);
-		}
-		info_is_current = true;
+		return get_node_type(path);
 	}
 
-	bool push(const char *subpath, bool should_update_info = true)
+	bool push(const char *subpath)
 	{
 		int length = path.length();
 		// sanity check
@@ -206,20 +177,15 @@ struct Filesystem_Node
 		
 		// add separator if needed
 		if (needs_separator)
-		{
 			path.append("\\");
-			info_is_current = false;
-		}
 
 		// add subpath
 		path.append(subpath);
 
-		//if (should_update_info)
-			update_info();
 		return true;
 	}
 
-	bool pop(bool should_update_info = true)
+	bool pop()
 	{
 		int length = path.length();
 		if (length <= 0)
@@ -230,10 +196,7 @@ struct Filesystem_Node
 
 		// ignore any final separators
 		if (path[length - 1] == '\\' || path[length - 1] == '/')
-		{
 			path.pop_back();
-			info_is_current = false;
-		}
 
 		// find first separator from right
 		
@@ -259,10 +222,7 @@ struct Filesystem_Node
 
 		//remove the subpath
 		path.erase(iter, path.end());
-		info_is_current = false;
 
-		//if (should_update_info)
-			update_info();
 		return true;
 	}
 
@@ -295,9 +255,6 @@ struct Filesystem_Node
 	{
 		bool needs_separator = path_needs_separator();
 
-		// preemptively invalidate info; it won't be accurate from here on out
-		info_is_current = false;
-
 		// create string from relative_dir_name
 		string rel_str = relative_dir_name;
 
@@ -312,8 +269,6 @@ struct Filesystem_Node
 
 		// copy the whole thing back
 		path = rel_str;
-
-		update_info();
 
 		return true;
 	}
@@ -549,7 +504,7 @@ void print_current_directory(App_Settings &settings)
 	do
 	{
 		cur.push(file_data.cFileName);
-		switch (cur.type)
+		switch (cur.get_type())
 		{
 		case nt_normal_file:
 			cout << "File:     " << file_data.cFileName << endl;
@@ -583,18 +538,13 @@ void print_current_directory(App_Settings &settings)
 
 bool delete_node_recursive(Filesystem_Node &node)
 {
-	Node_Type type = node.type;
-	node.update_info();
-	if (node.type != type)
-	{
-		cout << "Found you." << endl;
-	}
+	auto node_type = node.get_type();
 	bool delete_directory = false;
 
-	if (node.type == nt_normal_directory)
+	if (node_type == nt_normal_directory)
 	{
 		// compose search string
-		node.push("*", false);
+		node.push("*");
 		string search_term = node.path;
 		node.pop();
 
@@ -651,7 +601,8 @@ bool delete_node_recursive(Filesystem_Node &node)
 	}
 
 	// delete empty directory / symlinked directory
-	if (node.type == nt_symlink_directory || delete_directory)
+	node_type = node.get_type();
+	if (node_type == nt_symlink_directory || delete_directory)
 	{
 		// apparently this marks a directory for deletion upon close. So if it doesn't get deleted
 		//   that means that someone still has a handle to it...
@@ -666,7 +617,7 @@ bool delete_node_recursive(Filesystem_Node &node)
 	}
 
 	// delete normal file / symlinked file
-	else if (node.type == nt_normal_file || node.type == nt_symlink_file)
+	else if (node_type == nt_normal_file || node_type == nt_symlink_file)
 	{
 		if (!DeleteFile(node.path.data()))
 		{
@@ -687,8 +638,8 @@ bool delete_node(string &target, App_Settings &settings, bool confirm_with_user 
 	if (!node.is_qualified())
 		node.prepend(settings.current_dir.path.data());
 
-	node.update_info();
-	if (!node.exists)
+	auto node_type = node.get_type();
+	if (exists(node_type))
 	{
 		cerr << "The target: " << target << " doesn't exist. Failed to delete.";
 	}
@@ -732,10 +683,12 @@ bool delete_node(string &target, App_Settings &settings, bool confirm_with_user 
 
 bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 {
-	switch (src_node.type)
+	auto src_type = src_node.get_type();
+	auto dst_type = dst_node.get_type();
+	switch (src_type)
 	{
 	case nt_normal_file:
-		if (dst_node.exists)
+		if (exists(dst_type))
 		{
 			cerr << "Error: File: " << dst_node.path << " already exists." << endl;
 			return false;
@@ -746,12 +699,6 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 			cerr << "  " << src_node.path << endl;
 			cerr << "  " << dst_node.path << endl;
 			return false;
-		}
-		else
-		{
-			// copy successful
-			src_node.update_info();
-			dst_node.update_info();
 		}
 		break;
 
@@ -765,17 +712,12 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 			cerr << "  Error: " << GetLastError() << endl;
 			return false;
 		}
-		else
-		{
-			// creation successful
-			dst_node.update_info();
-		}
 
 		// create search string
-		src_node.push("*", false);
+		src_node.push("*");
 		WIN32_FIND_DATA data;
 		HANDLE handle = FindFirstFile(src_node.path.data(), &data);
-		src_node.pop(false);
+		src_node.pop();
 
 		if (handle == INVALID_HANDLE_VALUE)
 		{
@@ -820,8 +762,8 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 	case nt_symlink_directory:
 	{
 		// these two cases are basically the same
-		int open_flag   = (src_node.type == nt_symlink_directory) ? FILE_FLAG_BACKUP_SEMANTICS   : FILE_ATTRIBUTE_NORMAL;
-		int create_flag = (src_node.type == nt_symlink_directory) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0; // <- intentional 0
+		int open_flag   = (src_type == nt_symlink_directory) ? FILE_FLAG_BACKUP_SEMANTICS   : FILE_ATTRIBUTE_NORMAL;
+		int create_flag = (src_type == nt_symlink_directory) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0; // <- intentional 0
 
 		// file is symlinked
 		// directory is symlinked
@@ -871,16 +813,11 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 		{
 			cout << "Error creating symbolic link_name: " << GetLastError() << endl;
 		}
-		else
-		{
-			// symbolic link created successfully
-			dst_node.update_info();
-		}
 	}
 		break;
 
 	default:
-		cout << "Unknown node type!" << endl;
+		cerr << "Unknown node node_type!" << endl;
 		return false;
 		break;
 	}
@@ -919,11 +856,14 @@ bool relocate_node(string &target_path, App_Settings &settings)
 		src_node.prepend(settings.current_dir.path.data());
 
 	// create backup node
-	Filesystem_Node dst_node(settings.backup_dir.path.data(), false);
+	Filesystem_Node dst_node(settings.backup_dir.path.data());
 	dst_node.push(target_path.data());
 
+	// @robustness: check if the target path actually exists!
+
 	// only accept normal directories. For now.
-	if (src_node.type != nt_normal_directory)
+	auto src_type = src_node.get_type();
+	if (src_type != nt_normal_directory)
 	{
 		cerr << "Only normal directories can be relocated. So far." << endl;
 	}
@@ -958,8 +898,6 @@ bool relocate_node(string &target_path, App_Settings &settings)
 			cout << "ERROR: " << GetLastError() << endl;
 			return false;
 		}
-		else
-			settings.backup_dir.update_info();
 	}
 
 	//aaaaand, action!
@@ -973,11 +911,7 @@ bool relocate_node(string &target_path, App_Settings &settings)
 		return false;
 	}
 	else
-	{
 		cerr << "copy successful" << endl;
-		src_node.update_info();
-		dst_node.update_info();
-	}
 
 	// now, delete the previous tree
 	delete_node_recursive(src_node);
@@ -993,11 +927,7 @@ bool relocate_node(string &target_path, App_Settings &settings)
 		cerr << "  " << dst_node.path.data() << endl;
 	}
 	else
-	{
-		src_node.update_info();
-		dst_node.update_info();
 		cout << "Successfully created symlink" << endl;
-	}
 
 
 
@@ -1035,13 +965,11 @@ return false;
 void reset_test_data(App_Settings &settings)
 {
 	cout << "Resetting test data" << endl;
-	//settings.current_dir.update_info();
-	//settings.backup_dir.update_info();
-	//settings.test_data_dir.update_info();
-	//settings.test_data_source.update_info();
+
+	auto backup_dir_type = settings.backup_dir.get_type();
 
 	// delete backup_dir
-	if (settings.backup_dir.exists)
+	if (exists(backup_dir_type))
 	{
 		cout << "Deleting backup dir" << endl;
 		delete_node_recursive(settings.backup_dir);
@@ -1050,7 +978,8 @@ void reset_test_data(App_Settings &settings)
 		cout << "Skipping backup dir because it doesn't exist" << endl;
 
 	// delete test_data
-	if (settings.test_data_dir.exists)
+	auto test_data_dir_type = settings.test_data_dir.get_type();
+	if (exists(test_data_dir_type))
 	{
 		cout << "Deleting test dir" << endl;
 		delete_node_recursive(settings.test_data_dir);
