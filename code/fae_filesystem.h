@@ -497,8 +497,6 @@ creation_result create_directory(string &directory_path)
 			return cr_created;
 		}
 	}
-
-	//cout << "Directory '" << directory_path << "' failed to create." << endl;
 	return cr_failed;
 }
 
@@ -513,62 +511,89 @@ u64 get_freespace_for(const char* directory)
 	return (u64)number_of_free_sectors * (u64)bytes_per_sector;
 }
 
-
-u64 get_size_of_directory(string &directory_name)
+u64 get_size_of_node(Filesystem_Node &node)
 {
-	//cout << "searching " << directory_name << endl;
-
-	// create search term: directory/name/*
-
-	// @TODO: add some checks to make sure directory_name ends with a /
-	string search_term = directory_name + "/";
-	if (!ends_with(search_term, "/"))
-	{
-		search_term += "/*";
-	}
-	else
-	{
-		search_term += "*";
-	}
-
-	u64 directory_size = 0;
 	WIN32_FIND_DATA data;
-	HANDLE handle = FindFirstFile(search_term.data(), &data);
+	HANDLE handle = FindFirstFile(node.path.data(), &data);
 	if (handle == INVALID_HANDLE_VALUE)
-		return -1; // @TODO: Error handling
-	do {
-		directory_size += ((u64)data.nFileSizeHigh * ((u64)MAXDWORD + 1)) + (u64)data.nFileSizeLow;
-		bool is_directory = data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
-		bool is_symlink = (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && (data.dwReserved0 & IO_REPARSE_TAG_SYMLINK);
-		if (!is_directory && !is_symlink)
-		{
-			//cout << "  file is a regular (non-symlink'd) file." << endl;
-		}
-		else if (is_directory && !is_symlink)
-		{
-			//cout << "  file is a directory." << endl;
-			if (!matches(data.cFileName, ".") && !matches(data.cFileName, ".."))
-			{
-				//don't recurse into "." or ".." folders
-				search_term = directory_name + "/";
-				search_term += data.cFileName;
-				directory_size += get_size_of_directory(search_term);
-			}
-		}
-		else if (is_directory && is_symlink)
-		{
-			//cout << "  file is a symlink'd directory." << endl;
-		}
-		else if (!is_directory && is_symlink)
-		{
-			//cout << "  file is a symlink'd file." << endl;
-		}
-	} while (FindNextFile(handle, &data));
+	{
+		cerr << "Error retrieving: " << node.path << endl;
+		return -1;
+	}
+
+	//cout << node.path << endl;
+
+	auto node_type = get_node_type(data);
+
+	if (!exists(node_type))
+	{
+		cerr << "Error retrieving: " << node.path << endl;
+		FindClose(handle);
+		return -1;
+	}
+
+	u64 item_size = ((u64)data.nFileSizeHigh * ((u64)MAXDWORD + 1)) + (u64)data.nFileSizeLow;
+
+	switch (node_type)
+	{
+	case nt_normal_file:
+	case nt_symlink_file:
+	case nt_symlink_directory:
+		FindClose(handle);
+		return item_size;
+		break;
+
+	case nt_normal_directory:
+	{
+		FindClose(handle);
+
+		u64 node_size = item_size;
+		node.push("*");
+		string search_term = node.path;
+		node.pop();
+
+		handle = FindFirstFile(search_term.data(), &data);
+		bool file_found = true;
+		file_found = FindNextFile(handle, &data); // skip "."
+		if(file_found)
+			file_found = FindNextFile(handle, &data); // skip ".."
+
+		if(file_found)
+			do {
+				node.push(data.cFileName);
+				item_size = get_size_of_node(node);
+				if (item_size == -1)
+				{
+					node.pop();
+					FindClose(handle);
+					return -1;
+				}
+
+				node_size += item_size;
+				node.pop();
+
+			} while (FindNextFile(handle, &data));
+		FindClose(handle);
+		return node_size;
+	}
+		break;
+	default:
+		cerr << "Error: node is invalid: " << node.path << endl;
+		cerr << "  Reports type: " << name(node_type) << endl;
+		break;
+	}
+
 	FindClose(handle);
-	return directory_size;
+	return -1;
 }
 
-
+u64 get_size_of_node(string &path, App_Settings &settings)
+{
+	Filesystem_Node node(path);
+	if (!node.is_qualified())
+		node.prepend(settings.current_dir.path.data());
+	return get_size_of_node(node);
+}
 
 void print_current_directory(App_Settings &settings)
 {
@@ -649,13 +674,12 @@ bool delete_node_recursive(Filesystem_Node &node)
 					// delete each result
 					node.push(data.cFileName);
 					error = !delete_node_recursive(node);
-					// ^ directory can't be deleted until the handl in this stack frame closes...
-					//verify that I can't delete a directory that has a findnextfile handle open
 
 					if (error)
 					{
 						cerr << "Error deleting: " << node.path << endl;
 						cerr << "Error: " << GetLastError() << endl;
+						node.pop();
 						FindClose(handle);
 						return false;
 					}
@@ -896,20 +920,26 @@ bool relocate_node(string &target_path, App_Settings &settings)
 	Filesystem_Node dst_node(settings.backup_dir.path.data());
 	dst_node.push(target_path.data());
 
-	// @robustness: check if the target path actually exists!
+	auto src_type = src_node.get_type();
+
+	// make sure the directory actually exists
+	if (!exists(src_type))
+	{
+		cerr << "Target: " << src_node.path << " can't be found." << endl;
+		return false;
+	}
 
 	// only accept normal directories. For now.
-	auto src_type = src_node.get_type();
 	if (src_type != nt_normal_directory)
 	{
 		cerr << "Only normal directories can be relocated. So far." << endl;
+		return false;
 	}
-
 
 	// check sizes of directories
 	// @cleanup: this shouldn't take a string anymore; it should take a node
 	string string_path = src_node.path;
-	u64 size_target_directory = get_size_of_directory(string_path);
+	u64 size_target_directory = get_size_of_node(string_path, settings);
 	u64 freespace_for_backup_directory = get_freespace_for(settings.backup_dir.path.data());
 
 	// check if the target will fit on the backup drive
@@ -927,44 +957,37 @@ bool relocate_node(string &target_path, App_Settings &settings)
 	}
 
 	// create the backup directory if it doesn't exist
+	if (create_directory(settings.backup_dir.path) == cr_failed)
 	{
-creation_result result = create_directory(settings.backup_dir.path);
-if (result == cr_failed)
-{
-	cout << "Failed to create backup directory at: " << settings.backup_dir.path << endl;
-	cout << "ERROR: " << GetLastError() << endl;
-	return false;
-}
+		cout << "Failed to create backup directory at: " << settings.backup_dir.path << endl;
+		cout << "ERROR: " << GetLastError() << endl;
+		return false;
 	}
 
-	//aaaaand, action!
-	bool success = copy_node_recursive(src_node, dst_node);
-
-	if (!success)
+	// copy the node
+	if (!copy_node_recursive(src_node, dst_node))
 	{
 		cerr << "Failed to copy : " << endl;
 		cerr << "  " << src_node.path << " to: " << endl;
 		cerr << "  " << dst_node.path << endl;
 		return false;
 	}
-	else
-		cerr << "copy successful" << endl;
 
 	// now, delete the previous tree
-	delete_node_recursive(src_node);
+	if (!delete_node_recursive(src_node))
+	{
+		cerr << "Failed to delete node: " << src_node.path << endl;
+		return false;
+	}
 
 	// and then, create a symbolic link
-	success = create_symlink(src_node.path.data(), dst_node.path.data(), true);
-
-
-	if (!success)
+	if (!create_symlink(src_node.path.data(), dst_node.path.data(), true))
 	{
 		cerr << "Failed to create symlink:" << endl;
 		cerr << "  " << src_node.path.data() << " to:" << endl;
 		cerr << "  " << dst_node.path.data() << endl;
+		return false;
 	}
-	else
-		cout << "Successfully created symlink" << endl;
 
 	return true;
 }
@@ -976,6 +999,12 @@ bool restore_node(string &link, App_Settings &settings)
 	// check if link is actually a symlink
 	auto link_type = get_node_type(link);
 
+	if (!exists(link_type))
+	{
+		cerr << "Error: " << link << " doesn't exist." << endl;
+		return false;
+	}
+
 	if (link_type != nt_symlink_directory && link_type != nt_symlink_file)
 	{
 		cerr << "Error: " << link << " is not a symlink." << endl;
@@ -985,6 +1014,7 @@ bool restore_node(string &link, App_Settings &settings)
 	Filesystem_Node link_node = Filesystem_Node(link);
 	if (!link_node.is_qualified())
 		link_node.prepend(settings.current_dir.path.data());
+
 	//update the link_path_string
 	link = link_node.path;
 
@@ -1000,14 +1030,12 @@ bool restore_node(string &link, App_Settings &settings)
 		cerr << "Target type: " << name(target_type) << endl;
 	}
 
-	// check if the drive for link has the space for the target file/directory
-
 	// check sizes of directories
 	// @cleanup: this shouldn't take a string anymore; it should take a node
-	u64 size_target_directory = get_size_of_directory(target_path);
+	u64 size_target_directory = get_size_of_node(target_path, settings);
 	u64 freespace = get_freespace_for(link.data());
 
-	// check if the target will fit on the backup drive
+	// check if the drive for link has the space for the target file/directory
 	if (size_target_directory >= freespace)
 	{
 		cout << "Not enough freespace." << endl;

@@ -167,13 +167,21 @@ int main(int argc, char *argv[])
 			{
 				if (tokens.num_tokens == 1)
 				{
-					cout << "Size of current dirrectory: " << get_size_of_directory(settings.current_dir.path) << endl;
+					u64 size = get_size_of_node(settings.current_dir.path, settings);
+					string str;
+					get_best_size_for_bytes(size, str);
+					cout << "Size of current dirrectory: " << str << endl;
 				}
 				else if (tokens.num_tokens == 2)
 				{
+					// @bug: can't get size of a specific file
+
 					string size_directory;
 					to_string(tokens.tokens[1], size_directory);
-					cout << "Size of specified directory: " << get_size_of_directory(size_directory) << endl;
+					u64 size = get_size_of_node(size_directory, settings);
+					string str;
+					get_best_size_for_bytes(size, str);
+					cout << "Size of specified directory: " << str << endl;
 				}
 			}
 

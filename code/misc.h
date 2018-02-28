@@ -131,13 +131,6 @@ file_time_result compare_file_times(string &a, string &b)
 	return ft_equal;
 }
 
-// @TODO: add function for checking if files are identical,
-//			once I add file processing
-//bool are_files_identical(string &a, string &b)
-//{
-//
-//}
-
 const char* file_sizes[] =
 {
 	"B",
