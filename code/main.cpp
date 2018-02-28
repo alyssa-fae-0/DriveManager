@@ -55,9 +55,129 @@ using std::cin;
 		Should I just recreate them as-is?
 */
 
+static char szWindowClass[] = "win32app";
+static char szTitle[] = "Win32 Guided Tour Application";
+HINSTANCE Instance;
 
+LRESULT CALLBACK Window_Procedure(HWND window, UINT message, WPARAM w_param, LPARAM l_param)
+{
+	PAINTSTRUCT paint_struct;
+	HDC device_context_handle;
+	TCHAR greeting[] = "Hello, World!";
 
-int main(int argc, char *argv[])
+	switch (message)
+	{
+	case WM_PAINT:
+		device_context_handle = BeginPaint(window, &paint_struct);
+
+		// Here your application is laid out.  
+		// For this introduction, we just print out "Hello, World!"  
+		// in the top left corner.  
+		TextOut(device_context_handle,
+			5, 5,
+			greeting, strlen(greeting));
+		// End application specific layout section.  
+
+		EndPaint(window, &paint_struct);
+		break;
+	case WM_DESTROY:
+		PostQuitMessage(0);
+		break;
+	default:
+		return DefWindowProc(window, message, w_param, l_param);
+		break;
+	}
+
+	return 0;
+}
+
+int CALLBACK WinMain(
+	HINSTANCE instance,
+	HINSTANCE prev_instance,
+	LPSTR     cmd_line,
+	int       cmd_show
+)
+{
+
+	WNDCLASSEX wcex;
+
+	wcex.cbSize = sizeof(WNDCLASSEX);
+	wcex.style = CS_HREDRAW | CS_VREDRAW;
+	wcex.lpfnWndProc = Window_Procedure;
+	wcex.cbClsExtra = 0;
+	wcex.cbWndExtra = 0;
+	wcex.hInstance = instance;
+	wcex.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+	wcex.hCursor = LoadCursor(NULL, IDC_ARROW);
+	wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+	wcex.lpszMenuName = NULL;
+	wcex.lpszClassName = szWindowClass;
+	wcex.hIconSm = LoadIcon(wcex.hInstance, IDI_APPLICATION);
+
+	if (!RegisterClassEx(&wcex))
+	{
+		MessageBox(
+			NULL,
+			"Call to RegisterClassEx failed!",
+			"Win32 Guided Tour",
+			NULL);
+
+		return 1;
+	}
+
+	Instance = instance;
+
+	// The parameters to CreateWindow explained:  
+	// szWindowClass: the name of the application  
+	// szTitle: the text that appears in the title bar  
+	// WS_OVERLAPPEDWINDOW: the type of window to create  
+	// CW_USEDEFAULT, CW_USEDEFAULT: initial position (x, y)  
+	// 500, 100: initial size (width, length)  
+	// NULL: the parent of this window  
+	// NULL: this application does not have a menu bar  
+	// instance: the first parameter from WinMain  
+	// NULL: not used in this application  
+	HWND window = CreateWindow(
+		szWindowClass,
+		szTitle,
+		WS_OVERLAPPEDWINDOW,
+		CW_USEDEFAULT, CW_USEDEFAULT,
+		500, 100,
+		NULL,
+		NULL,
+		instance,
+		NULL
+	);
+
+	if (!window)
+	{
+		MessageBox(
+			NULL,
+			"Call to CreateWindow failed!",
+			"Win32 Guided Tour",
+			NULL);
+
+		return 1;
+	}
+
+	// The parameters to ShowWindow explained:  
+	// window: the value returned from CreateWindow  
+	// cmd_show: the fourth parameter from WinMain  
+	ShowWindow(window, cmd_show);
+	UpdateWindow(window);
+
+	// Main message loop:  
+	MSG message;
+	while (GetMessage(&message, NULL, 0, 0))
+	{
+		TranslateMessage(&message);
+		DispatchMessage(&message);
+	}
+
+	return (int)message.wParam;
+}
+
+int not_main(int argc, char *argv[])
 {
 	cout.imbue(std::locale(""));
 
