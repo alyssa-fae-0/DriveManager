@@ -55,24 +55,41 @@ using std::cin;
 		Should I just recreate them as-is?
 */
 
+/*
 static char szWindowClass[] = "win32app";
 static char szTitle[] = "Win32 Guided Tour Application";
 HINSTANCE Instance;
+*/
 
+App_Settings Settings;
+
+/*
 LRESULT CALLBACK Window_Procedure(HWND window, UINT message, WPARAM w_param, LPARAM l_param)
 {
 	PAINTSTRUCT paint_struct;
 	HDC device_context_handle;
-	TCHAR greeting[] = "Hello, World!";
+	CHAR greeting[] = "Hello, World!";
 
 	switch (message)
 	{
+	case WM_KEYDOWN:
+	{
+		// escape key pressed
+		if (w_param == VK_ESCAPE)
+		{
+			// exit application
+			PostQuitMessage(0);
+		}
+	}
+		break;
+		
 	case WM_PAINT:
 		device_context_handle = BeginPaint(window, &paint_struct);
 
 		// Here your application is laid out.  
 		// For this introduction, we just print out "Hello, World!"  
 		// in the top left corner.  
+
 		TextOut(device_context_handle,
 			5, 5,
 			greeting, strlen(greeting));
@@ -91,6 +108,8 @@ LRESULT CALLBACK Window_Procedure(HWND window, UINT message, WPARAM w_param, LPA
 	return 0;
 }
 
+
+
 int CALLBACK WinMain(
 	HINSTANCE instance,
 	HINSTANCE prev_instance,
@@ -98,6 +117,7 @@ int CALLBACK WinMain(
 	int       cmd_show
 )
 {
+	init_settings();
 
 	WNDCLASSEX wcex;
 
@@ -166,6 +186,7 @@ int CALLBACK WinMain(
 	ShowWindow(window, cmd_show);
 	UpdateWindow(window);
 
+
 	// Main message loop:  
 	MSG message;
 	while (GetMessage(&message, NULL, 0, 0))
@@ -176,8 +197,9 @@ int CALLBACK WinMain(
 
 	return (int)message.wParam;
 }
+*/
 
-int not_main(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
 	cout.imbue(std::locale(""));
 
@@ -194,20 +216,14 @@ int not_main(int argc, char *argv[])
 	Slice_Group tokens;
 	tokens.tokens = (Slice*)memory_page;
 
-	App_Settings settings;
-	settings.current_dir		= "C:\\dev";
-	settings.backup_dir			= "C:\\dev\\bak";
-	settings.test_data_dir		= "C:\\dev\\test_data";
-	settings.test_data_source	= "C:\\dev\\test_data_source";
-
-	SetCurrentDirectory(settings.current_dir.path.data());
+	SetCurrentDirectory(utf8_to_utf16(Settings.current_dir.path).data());
 
 	test_filesystem_node();
 
 	while (should_run)
 	{
 
-		cout << endl << settings.current_dir.path << ">";
+		cout << endl << Settings.current_dir.path << ">";
 		std::getline(cin, input);
 
 		// tokenize the input
@@ -280,14 +296,14 @@ int not_main(int argc, char *argv[])
 
 			// check for ls
 			else if (matches(tokens.tokens[0], "ls") || matches(tokens.tokens[0], "dir"))
-				print_current_directory(settings);
+				print_current_directory(Settings);
 
 			// check for size command
 			else if (matches(tokens.tokens[0], "size"))
 			{
 				if (tokens.num_tokens == 1)
 				{
-					u64 size = get_size_of_node(settings.current_dir.path, settings);
+					u64 size = get_size_of_node(Settings.current_dir.path, Settings);
 					string str;
 					get_best_size_for_bytes(size, str);
 					cout << "Size of current dirrectory: " << str << endl;
@@ -298,7 +314,7 @@ int not_main(int argc, char *argv[])
 
 					string size_directory;
 					to_string(tokens.tokens[1], size_directory);
-					u64 size = get_size_of_node(size_directory, settings);
+					u64 size = get_size_of_node(size_directory, Settings);
 					string str;
 					get_best_size_for_bytes(size, str);
 					cout << "Size of specified directory: " << str << endl;
@@ -313,10 +329,10 @@ int not_main(int argc, char *argv[])
 					//@bug: can't cd "c:\" or pop from c:\dev
 					if (matches(tokens.tokens[1], ".."))
 					{
-						settings.current_dir.pop();
-						if (!SetCurrentDirectory(settings.current_dir.path.data()))
+						Settings.current_dir.pop();
+						if (!SetCurrentDirectory(utf8_to_utf16(Settings.current_dir.path).data()))
 						{
-							cerr << "Can't cd to: " << settings.current_dir.path << endl;
+							cerr << "Can't cd to: " << Settings.current_dir.path << endl;
 							auto error = GetLastError();
 							cerr << "Reason: ";
 							switch (error)
@@ -338,12 +354,12 @@ int not_main(int argc, char *argv[])
 
 						if (!dir.is_qualified())
 						{
-							dir.prepend(settings.current_dir.path.data());
+							dir.prepend(Settings.current_dir.path.data());
 						}
 
-						if (SetCurrentDirectory(dir.path.data()))
+						if (SetCurrentDirectory(utf8_to_utf16(dir.path).data()))
 						{
-							settings.current_dir = dir;
+							Settings.current_dir = dir;
 						}
 						else
 						{
@@ -372,7 +388,7 @@ int not_main(int argc, char *argv[])
 				{
 					string target;
 					to_string(tokens.tokens[1], target);
-					relocate_node(target, settings);
+					relocate_node(target, Settings);
 				}
 			}
 
@@ -382,7 +398,7 @@ int not_main(int argc, char *argv[])
 				{
 					string target;
 					to_string(tokens.tokens[1], target);
-					restore_node(target, settings);
+					restore_node(target, Settings);
 				}
 			}
 
@@ -392,13 +408,13 @@ int not_main(int argc, char *argv[])
 				{
 					string dir;
 					to_string(tokens.tokens[1], dir);
-					delete_node(dir, settings, true);
+					delete_node(dir, Settings, true);
 				}
 			}
 
 			else if (matches(tokens.tokens[0], "reset"))
 			{
-				reset_test_data(settings);
+				reset_test_data(Settings);
 			}
 
 			else if (matches(tokens.tokens[0], "test"))

@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include <iostream>
+#include <locale>
 
 using std::cerr;
 using std::cout;
@@ -83,7 +84,7 @@ Node_Type get_node_type(WIN32_FIND_DATA &data)
 Node_Type get_node_type(string &path)
 {
 	WIN32_FIND_DATA data;
-	HANDLE handle = FindFirstFile(path.data(), &data);
+	HANDLE handle = FindFirstFile(utf8_to_utf16(path).data(), &data);
 	Node_Type type = nt_error;
 	if (handle == INVALID_HANDLE_VALUE)
 	{
@@ -94,8 +95,10 @@ Node_Type get_node_type(string &path)
 	return type;
 }
 
+// @unicode this whole thing
 struct Filesystem_Node
 {
+	// utf-8 encoded
 	string path;
 
 	// create empty filesystem_node
@@ -333,47 +336,56 @@ string get_target_of_symlink(string &link_path, Node_Type link_type)
 {
 	int open_flag = (link_type == nt_symlink_directory) ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL;																					 // file is 
 
-	HANDLE linked_handle = CreateFile(
-		link_path.data(),	 // file to open
-		GENERIC_READ,	 // open for reading
-		FILE_SHARE_READ, // share for reading
-		NULL,			 // default security
-		OPEN_EXISTING,	 // existing file only
-		open_flag,		 // open the target, not the link
-		NULL);			 // no attr. template)
+	HANDLE linked_handle = INVALID_HANDLE_VALUE;
+
+	{
+		linked_handle = CreateFile(
+			utf8_to_utf16(link_path).data(),	// file to open
+			GENERIC_READ,						// open for reading
+			FILE_SHARE_READ,					// share for reading
+			NULL,								// default security
+			OPEN_EXISTING,						// existing file only
+			open_flag,							// open the target, not the link
+			NULL);								// no attr. template)
+	}
 
 	if (linked_handle == INVALID_HANDLE_VALUE)
 	{
-		cout << "Could not open link. Error: " << GetLastError() << endl;
+		cout << u8"Could not open link. Error: " << GetLastError() << endl;
 		return false;
 	}
 
-	char path[MAX_PATH];
-	DWORD final_path_length = GetFinalPathNameByHandle(linked_handle, path, MAX_PATH, 0);
-	if (final_path_length >= MAX_PATH)
-	{
-		path[0] = 0;
-	}
+	DWORD final_path_length = GetFinalPathNameByHandleW(linked_handle, null, 0, 0);
+	std::vector<wchar_t> final_path(final_path_length);
+	auto return_value = GetFinalPathNameByHandleW(linked_handle, &final_path[0], 0, 0);
 
 	CloseHandle(linked_handle);
-	if (path[0] == 0)
+	if (return_value > final_path_length)
 	{
-		cout << "Failed to get link for symlink" << endl;
+		cout << u8"Failed to get link for symlink" << endl;
 		return false;
 	}
+	string path = utf16_to_utf8(final_path);
 
+	// @BUG do we need to skip "\\?\" at the start?
 	// @cleanup: this is literally a use of starts_with(), but on a cstring
-	const char* target_name = path;
-	if (final_path_length > 4)
-	{
-		if (path[0] == '\\' && path[1] == '\\' && path[2] == '?' && path[3] == '\\')
-		{
-			// name starts with '\\?\' take a pointer to the actual name
-			target_name = &path[4];
-		}
-	}
 
-	return string(target_name);
+	// skip the first "\\?\" if it exists
+
+
+	//if (path[0] == '\\' && path[1] == '\\' && path[2] == '?' && path[3] == '\\')
+	//{
+	//	// name starts with '\\?\' take a pointer to the actual name
+	//	target_name = &path[4];
+	//}	
+	//if (starts_with(final_path, u8"\\\\?\\"))
+	//{
+
+	//}
+	
+
+
+	return path;
 }
 
 struct App_Settings
@@ -384,7 +396,18 @@ struct App_Settings
 	Filesystem_Node test_data_source;
 };
 
+extern App_Settings Settings;
 
+void init_settings()
+{
+	Settings.current_dir		= "C:\\dev";
+	Settings.backup_dir			= "C:\\dev\\bak";
+	Settings.test_data_dir		= "C:\\dev\\test_data";
+	Settings.test_data_source	= "C:\\dev\\test_data_source";
+}
+
+
+//@unicode
 bool starts_with_drive(const char* directory)
 {
 	int str_len = strlen(directory);
@@ -405,6 +428,7 @@ bool starts_with_drive(const char* directory)
 	return true;
 }
 
+//@unicode
 bool starts_with_drive(string &directory)
 {
 	if (directory.length() < 3)
@@ -431,90 +455,122 @@ enum creation_result
 	cr_failed
 };
 
+//@unicode
 creation_result create_directory(string &directory_path)
 {
+	auto directory_path_w = utf8_to_utf16(directory_path);
+
 	bool exists = false;
 	{
 		WIN32_FIND_DATA file_data;
-		HANDLE handle = FindFirstFile(directory_path.data(), &file_data);
+		HANDLE handle = FindFirstFile(directory_path_w.data(), &file_data);
 
 		// check for the directory
 		if (handle != INVALID_HANDLE_VALUE)
 		{
-			//cout << "Directory '" << directory_path << "' already exists." << endl;
+			cerr << "Directory: " << directory_path << " already existed." << endl;
 			FindClose(handle);
 			return cr_existed;
 		}
-		FindClose(handle);
 	}
 
 	// create the directory
-	if (CreateDirectory(directory_path.data(), null))
+	if (CreateDirectory(directory_path_w.data(), null))
 	{
-		//cout << "Directory '" << directory_path << "' created." << endl;
 		return cr_created;
 	}
-
+	
+	// ERROR_PATH_NOT_FOUND is returned if you try to create a directory in a parent directory that doesn't exist
+	//   put simply, one or more parent directories don't exist
 	if (GetLastError() == ERROR_PATH_NOT_FOUND)
 	{
 		if (!starts_with_drive(directory_path))
 		{
-			cout << "ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR " << endl;
-			cout << "Path must be prefixed by a drive to be created." << endl;
-			cout << "Path specified was: " << directory_path << endl;
+			cout << u8"ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR " << endl;
+			cout << u8"Path must be prefixed by a drive to be created." << endl;
+			cout << u8"Path specified was: " << directory_path << endl;
 			return cr_failed;
 		}
 
+
+		int num_code_points = directory_path.length();
 		const char* path = directory_path.data();
-		int path_length = directory_path.length();
-		char *tmp = (char*)malloc(path_length + 1); // + 1 to account for null-terminator
-		int last_separator = -1;
+		std::vector<wchar_t> tmp;
 
-		bool success = false;
-
-		for (int i = 0; i < path_length; i++)
+		for (auto iter = directory_path_w.begin(); iter < directory_path_w.end(); iter++)
 		{
-			char c = path[i];
-			if ((c == '\\' || c == '/') && i > 2)
+			wchar_t c = *iter;
+			
+			// we hit a separator
+			if ((c == L'\\' || c == L'/'))
 			{
-				last_separator = i;
-				tmp[i] = 0;
-				success = CreateDirectory(tmp, 0) != 0;
+				tmp.push_back(0);
+				CreateDirectory(&tmp[0], 0);
+				tmp.pop_back();
+				
 			}
-			tmp[i] = path[i];
+			tmp.push_back(c);
 		}
-		if (last_separator != path_length - 1)
+
+		wchar_t last_char = *tmp.end();
+
+		// path ends in directory name, not separator
+		if (last_char == L'\\' || last_char == L'/')
 		{
-			// path ends in directory name, not separator
-			// manually rerun last subdirectory 
-			// Note: we could just rerun the original string
-			tmp[path_length] = 0;
-			success = CreateDirectory(tmp, 0) != 0;
+			// pop the last char
+			tmp.pop_back();
 		}
-		free(tmp);
-		if (success)
+
+		tmp.push_back(0);
+
+		// and rerun creation
+		if (!CreateDirectory(&tmp[0], 0))
 		{
-			return cr_created;
+			auto result = GetLastError();
+			if (result == ERROR_ALREADY_EXISTS)
+			{
+				return cr_created;
+			}
+			else
+				return cr_failed;
 		}
+		return cr_created;
 	}
 	return cr_failed;
 }
 
-u64 get_freespace_for(const char* directory)
+//@unicode
+u64 get_freespace_for(string& directory)
 {
 	// get the amount of free space on the drive of a given path
 	DWORD sectors_per_cluster, bytes_per_sector, number_of_free_sectors, total_number_of_clusters;
-	char drive_name[4];
-	strncpy_s(drive_name, 4, directory, 3);
-	drive_name[3] = 0;
-	GetDiskFreeSpace(drive_name, &sectors_per_cluster, &bytes_per_sector, &number_of_free_sectors, &total_number_of_clusters);
+	std::wstring dir_w = utf8_to_utf16(directory);
+	std::wstring drive_w;
+
+	// check for '\' first;
+	auto index = dir_w.find_first_of(L'\\');
+	if (index == std::string::npos)
+	{
+		// then check for '/'
+		index = dir_w.find_first_of(L'/');
+		if (index == std::string::npos)
+		{
+			// and if we can't find either, this is invalid
+			cout << "ERROR: '" << directory << "' does not indicate a valid drive." << endl;
+			return -1;
+		}
+	}
+
+	drive_w = dir_w.substr(0, index);
+	GetDiskFreeSpace(dir_w.data(), &sectors_per_cluster, &bytes_per_sector, &number_of_free_sectors, &total_number_of_clusters);
 	return (u64)number_of_free_sectors * (u64)bytes_per_sector;
 }
 
+//@unicode
 u64 get_size_of_node(Filesystem_Node &node)
 {
 	WIN32_FIND_DATA data;
-	HANDLE handle = FindFirstFile(node.path.data(), &data);
+	HANDLE handle = FindFirstFile(utf8_to_utf16(node.path).data(), &data);
 	if (handle == INVALID_HANDLE_VALUE)
 	{
 		cerr << "Error retrieving: " << node.path << endl;
@@ -548,11 +604,11 @@ u64 get_size_of_node(Filesystem_Node &node)
 		FindClose(handle);
 
 		u64 node_size = item_size;
-		node.push("*");
+		node.push(u8"*");
 		string search_term = node.path;
 		node.pop();
 
-		handle = FindFirstFile(search_term.data(), &data);
+		handle = FindFirstFile(utf8_to_utf16(search_term).data(), &data);
 		bool file_found = true;
 		file_found = FindNextFile(handle, &data); // skip "."
 		if(file_found)
@@ -560,7 +616,7 @@ u64 get_size_of_node(Filesystem_Node &node)
 
 		if(file_found)
 			do {
-				node.push(data.cFileName);
+				node.push(utf16_to_utf8(data.cFileName).data());
 				item_size = get_size_of_node(node);
 				if (item_size == -1)
 				{
@@ -578,8 +634,8 @@ u64 get_size_of_node(Filesystem_Node &node)
 	}
 		break;
 	default:
-		cerr << "Error: node is invalid: " << node.path << endl;
-		cerr << "  Reports type: " << name(node_type) << endl;
+		cerr << u8"Error: node is invalid: " << node.path << endl;
+		cerr << u8"  Reports type: " << name(node_type) << endl;
 		break;
 	}
 
@@ -595,6 +651,7 @@ u64 get_size_of_node(string &path, App_Settings &settings)
 	return get_size_of_node(node);
 }
 
+//@unicode
 void print_current_directory(App_Settings &settings)
 {
 
@@ -602,12 +659,12 @@ void print_current_directory(App_Settings &settings)
 	cur.push("*");
 
 	WIN32_FIND_DATA file_data;
-	HANDLE file_handle = FindFirstFile(cur.path.data(), &file_data);
+	HANDLE file_handle = FindFirstFile(utf8_to_utf16(cur.path).data(), &file_data);
 	cur.pop();
 
 	do
 	{
-		cur.push(file_data.cFileName);
+		cur.push(utf16_to_utf8(file_data.cFileName).data());
 		switch (cur.get_type())
 		{
 		case nt_normal_file:
@@ -640,6 +697,7 @@ void print_current_directory(App_Settings &settings)
 	FindClose(file_handle);
 }
 
+//@unicode
 bool delete_node_recursive(Filesystem_Node &node)
 {
 	auto node_type = node.get_type();
@@ -648,13 +706,13 @@ bool delete_node_recursive(Filesystem_Node &node)
 	if (node_type == nt_normal_directory)
 	{
 		// compose search string
-		node.push("*");
+		node.push(u8"*");
 		string search_term = node.path;
 		node.pop();
 
 		WIN32_FIND_DATA data;
-		HANDLE handle = FindFirstFile(search_term.data(), &data);
-		cout << "Search term: " << search_term << endl;
+		HANDLE handle = FindFirstFile(utf8_to_utf16(search_term).data(), &data);
+		cout << u8"Search term: " << search_term << endl;
 
 		if (handle != INVALID_HANDLE_VALUE)
 		{
@@ -672,7 +730,7 @@ bool delete_node_recursive(Filesystem_Node &node)
 				do
 				{
 					// delete each result
-					node.push(data.cFileName);
+					node.push(utf16_to_utf8(data.cFileName).data());
 					error = !delete_node_recursive(node);
 
 					if (error)
@@ -709,7 +767,7 @@ bool delete_node_recursive(Filesystem_Node &node)
 	{
 		// apparently this marks a directory for deletion upon close. So if it doesn't get deleted
 		//   that means that someone still has a handle to it...
-		if (!RemoveDirectory(node.path.data()))
+		if (!RemoveDirectory(utf8_to_utf16(node.path).data()))
 		{
 			cerr << "Failed to delete directory: " << node.path << endl;
 			return false;
@@ -722,7 +780,7 @@ bool delete_node_recursive(Filesystem_Node &node)
 	// delete normal file / symlinked file
 	else if (node_type == nt_normal_file || node_type == nt_symlink_file)
 	{
-		if (!DeleteFile(node.path.data()))
+		if (!DeleteFile(utf8_to_utf16(node.path).data()))
 		{
 			cerr << "Failed to delete file: " << node.path.data() << endl;
 			cerr << "Error: " << GetLastError() << endl;
@@ -735,6 +793,7 @@ bool delete_node_recursive(Filesystem_Node &node)
 	return false;
 }
 
+// @unicode
 bool delete_node(string &target, App_Settings &settings, bool confirm_with_user = true)
 {
 	Filesystem_Node node = target;
@@ -796,7 +855,7 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 			cerr << "Error: File: " << dst_node.path << " already exists." << endl;
 			return false;
 		}
-		if (!CopyFile(src_node.path.data(), dst_node.path.data(), true))
+		if (!CopyFile(utf8_to_utf16(src_node.path).data(), utf8_to_utf16(dst_node.path).data(), true))
 		{
 			cerr << "Failed to copy file" << endl;
 			cerr << "  " << src_node.path << endl;
@@ -808,7 +867,7 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 	case nt_normal_directory:
 	{
 		// copy directory
-		if (!CreateDirectory(dst_node.path.data(), 0))
+		if (!CreateDirectory(utf8_to_utf16(dst_node.path).data(), 0))
 		{
 			cerr << "Failed to create directory" << endl;
 			cerr << "  " << dst_node.path << endl;
@@ -819,7 +878,7 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 		// create search string
 		src_node.push("*");
 		WIN32_FIND_DATA data;
-		HANDLE handle = FindFirstFile(src_node.path.data(), &data);
+		HANDLE handle = FindFirstFile(utf8_to_utf16(src_node.path).data(), &data);
 		src_node.pop();
 
 		if (handle == INVALID_HANDLE_VALUE)
@@ -839,8 +898,8 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 		do
 		{
 			// update the paths
-			src_node.push(data.cFileName);
-			dst_node.push(data.cFileName);
+			src_node.push(utf16_to_utf8(data.cFileName).data());
+			dst_node.push(utf16_to_utf8(data.cFileName).data());
 
 			// throw everything into a recursive version of this function
 			error = !copy_node_recursive(src_node, dst_node);
@@ -869,7 +928,7 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 
 		string target_path = get_target_of_symlink(src_node.path, src_type);
 
-		auto result = CreateSymbolicLink(dst_node.path.data(), target_path.data(), create_flag);
+		auto result = CreateSymbolicLink(utf8_to_utf16(dst_node.path).data(), utf8_to_utf16(target_path).data(), create_flag);
 		if (result == 0)
 		{
 			cout << "Error creating symbolic link_name: " << GetLastError() << endl;
@@ -888,9 +947,10 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 
 #include "misc.h"
 
+//@unicode
 bool create_symlink(const char *link_name, const char *target_name, bool directory)
 {
-	if (CreateSymbolicLink(link_name, target_name, (directory) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0))
+	if (CreateSymbolicLink(utf8_to_utf16(link_name).data(), utf8_to_utf16(target_name).data(), (directory) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0))
 	{
 		cout << "Created symlink: " << target_name << endl << "  pointing to: " << link_name << endl;
 		return true;
@@ -940,7 +1000,7 @@ bool relocate_node(string &target_path, App_Settings &settings)
 	// @cleanup: this shouldn't take a string anymore; it should take a node
 	string string_path = src_node.path;
 	u64 size_target_directory = get_size_of_node(string_path, settings);
-	u64 freespace_for_backup_directory = get_freespace_for(settings.backup_dir.path.data());
+	u64 freespace_for_backup_directory = get_freespace_for(settings.backup_dir.path);
 
 	// check if the target will fit on the backup drive
 	if (size_target_directory >= freespace_for_backup_directory)
@@ -1033,7 +1093,7 @@ bool restore_node(string &link, App_Settings &settings)
 	// check sizes of directories
 	// @cleanup: this shouldn't take a string anymore; it should take a node
 	u64 size_target_directory = get_size_of_node(target_path, settings);
-	u64 freespace = get_freespace_for(link.data());
+	u64 freespace = get_freespace_for(link);
 
 	// check if the drive for link has the space for the target file/directory
 	if (size_target_directory >= freespace)

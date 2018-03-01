@@ -15,6 +15,7 @@ void print_filetime(FILETIME *ft, const char *identifier)
 }
 
 
+/*
 void scan_files()
 {
 	// for scanning drives and creating mappings (might need this later)
@@ -89,7 +90,7 @@ void scan_files()
 		u64 size;
 	};
 }
-
+*/
 
 enum file_time_result
 {
@@ -101,7 +102,7 @@ enum file_time_result
 bool file_exists(string &file_name)
 {
 	WIN32_FIND_DATA data;
-	HANDLE handle = FindFirstFile(file_name.data(), &data);
+	HANDLE handle = FindFirstFile(utf8_to_utf16(file_name).data(), &data);
 	if (handle != INVALID_HANDLE_VALUE)
 	{
 		FindClose(handle);
@@ -113,8 +114,8 @@ bool file_exists(string &file_name)
 file_time_result compare_file_times(string &a, string &b)
 {
 	WIN32_FIND_DATA a_data, b_data;
-	HANDLE a_handle = FindFirstFile(a.data(), &a_data);
-	HANDLE b_handle = FindFirstFile(b.data(), &a_data);
+	HANDLE a_handle = FindFirstFile(utf8_to_utf16(a).data(), &a_data);
+	HANDLE b_handle = FindFirstFile(utf8_to_utf16(b).data(), &a_data);
 	long result = CompareFileTime(&a_data.ftLastWriteTime, &b_data.ftLastWriteTime);
 	switch (result)
 	{

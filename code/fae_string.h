@@ -3,7 +3,62 @@
 #include "fae_lib.h"
 #include "fae_memory.h"
 #include <string>
+#include <vector>
 using std::string;
+
+std::string utf16_to_utf8(const wchar_t* wstr)
+{
+	//int length_w = lstrlenW(wstr);
+	std::string converted_string;
+	int required_size = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, 0, 0, 0, 0);
+	if (required_size > 0)
+	{
+		std::vector<char> buffer(required_size);
+		WideCharToMultiByte(CP_UTF8, 0, wstr, -1, &buffer[0], required_size, 0, 0);
+		converted_string.assign(buffer.begin(), buffer.end() - 1);
+	}
+	return converted_string;
+}
+
+std::string utf16_to_utf8(const std::vector<wchar_t>& wbuf)
+{
+	std::string converted_string;
+	int required_size = WideCharToMultiByte(CP_UTF8, 0, &wbuf[0], -1, 0, 0, 0, 0);
+	if (required_size > 0)
+	{
+		std::vector<char> buffer(required_size);
+		WideCharToMultiByte(CP_UTF8, 0, &wbuf[0], -1, &buffer[0], required_size, 0, 0);
+		converted_string.assign(buffer.begin(), buffer.end() - 1);
+	}
+	return converted_string;
+}
+
+std::string utf16_to_utf8(const std::wstring& wstr)
+{
+	std::string converted_string;
+	int required_size = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, 0, 0, 0, 0);
+	if (required_size > 0)
+	{
+		std::vector<char> buffer(required_size);
+		WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &buffer[0], required_size, 0, 0);
+		converted_string.assign(buffer.begin(), buffer.end() - 1);
+	}
+	return converted_string;
+}
+
+std::wstring utf8_to_utf16(const std::string& str)
+{
+	std::wstring converted_string;
+	int required_size = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, 0, 0);
+	if (required_size > 0)
+	{
+		std::vector<wchar_t> buffer(required_size);
+		MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &buffer[0], required_size);
+		converted_string.assign(buffer.begin(), buffer.end() - 1);
+	}
+
+	return converted_string;
+}
 
 struct Slice
 {
