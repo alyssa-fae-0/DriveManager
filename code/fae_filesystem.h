@@ -357,7 +357,7 @@ string get_target_of_symlink(string &link_path, Node_Type link_type)
 
 	DWORD final_path_length = GetFinalPathNameByHandleW(linked_handle, null, 0, 0);
 	std::vector<wchar_t> final_path(final_path_length);
-	auto return_value = GetFinalPathNameByHandleW(linked_handle, &final_path[0], 0, 0);
+	auto return_value = GetFinalPathNameByHandleW(linked_handle, &final_path[0], final_path_length, 0);
 
 	CloseHandle(linked_handle);
 	if (return_value > final_path_length)
@@ -367,23 +367,14 @@ string get_target_of_symlink(string &link_path, Node_Type link_type)
 	}
 	string path = utf16_to_utf8(final_path);
 
-	// @BUG do we need to skip "\\?\" at the start?
 	// @cleanup: this is literally a use of starts_with(), but on a cstring
 
 	// skip the first "\\?\" if it exists
-
-
-	//if (path[0] == '\\' && path[1] == '\\' && path[2] == '?' && path[3] == '\\')
-	//{
-	//	// name starts with '\\?\' take a pointer to the actual name
-	//	target_name = &path[4];
-	//}	
-	//if (starts_with(final_path, u8"\\\\?\\"))
-	//{
-
-	//}
-	
-
+	if (starts_with(path, u8"\\\\?\\"))
+	{
+		size_t offset = 4;
+		path = path.substr(offset, path.length() - 4);
+	}
 
 	return path;
 }
@@ -400,10 +391,10 @@ extern App_Settings Settings;
 
 void init_settings()
 {
-	Settings.current_dir		= "C:\\dev";
-	Settings.backup_dir			= "C:\\dev\\bak";
-	Settings.test_data_dir		= "C:\\dev\\test_data";
-	Settings.test_data_source	= "C:\\dev\\test_data_source";
+	Settings.current_dir		= u8"C:\\dev";
+	Settings.backup_dir			= u8"C:\\dev\\bak";
+	Settings.test_data_dir		= u8"C:\\dev\\test_data";
+	Settings.test_data_source	= u8"C:\\dev\\test_data_source";
 }
 
 
@@ -561,8 +552,8 @@ u64 get_freespace_for(string& directory)
 		}
 	}
 
-	drive_w = dir_w.substr(0, index);
-	GetDiskFreeSpace(dir_w.data(), &sectors_per_cluster, &bytes_per_sector, &number_of_free_sectors, &total_number_of_clusters);
+	drive_w = dir_w.substr(0, index+1);
+	GetDiskFreeSpace(drive_w.data(), &sectors_per_cluster, &bytes_per_sector, &number_of_free_sectors, &total_number_of_clusters);
 	return (u64)number_of_free_sectors * (u64)bytes_per_sector;
 }
 
@@ -651,12 +642,12 @@ u64 get_size_of_node(string &path, App_Settings &settings)
 	return get_size_of_node(node);
 }
 
-//@unicode
+//@unicode done
 void print_current_directory(App_Settings &settings)
 {
 
 	Filesystem_Node cur = settings.current_dir;
-	cur.push("*");
+	cur.push(u8"*");
 
 	WIN32_FIND_DATA file_data;
 	HANDLE file_handle = FindFirstFile(utf8_to_utf16(cur.path).data(), &file_data);
@@ -664,33 +655,35 @@ void print_current_directory(App_Settings &settings)
 
 	do
 	{
-		cur.push(utf16_to_utf8(file_data.cFileName).data());
+		string filename = utf16_to_utf8(file_data.cFileName);
+		cur.push(filename.data());
 		switch (cur.get_type())
 		{
 		case nt_normal_file:
-			cout << "File:     " << file_data.cFileName << endl;
+			cout << "File:     ";
 			break;
 
 		case nt_normal_directory:
-			cout << "Dir:      " << file_data.cFileName << endl;
+			cout << "Dir:      ";
 			break;
 
 		case nt_symlink_file:
-			cout << "Sym file: " << file_data.cFileName << endl;
+			cout << "Sym file: ";
 			break;
 
 		case nt_symlink_directory:
-			cout << "Sym dir:  " << file_data.cFileName << endl;
+			cout << "Sym dir:  ";
 			break;
 
 		case nt_error:
-			cout << "ERROR:    " << file_data.cFileName << endl;
+			cout << "ERROR:    ";
 			break;
 
 		default:
-			cout << "           " << file_data.cFileName << endl;
+			cout << "          ";
 			break;
 		}
+		cout << filename << endl;
 		cur.pop();
 
 	} while (FindNextFile(file_handle, &file_data));

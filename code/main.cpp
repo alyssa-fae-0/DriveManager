@@ -1,4 +1,4 @@
-#include <stdlib.h>
+﻿#include <stdlib.h>
 #include <stdio.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -207,11 +207,23 @@ int main(int argc, char *argv[])
 	GetSystemInfo(&system_info);
 
 	char *memory_page = (char*)VirtualAlloc(null, system_info.dwPageSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-	printf("Page addr: 0x%x Page size: %i bytes\n", (unsigned int)memory_page, system_info.dwPageSize);
+	printf(u8"Page addr: 0x%x Page size: %i bytes\n", (unsigned int)memory_page, system_info.dwPageSize);
 	char *free_memory_start = memory_page;
+
+	init_settings();
 
 	string input;
 	bool should_run = true;
+
+	// debug{
+
+	string str(u8"Hello, 日本");
+	cout << str << endl;
+
+	//system("PAUSE");
+	//should_run = false;
+
+	// }debug
 
 	Slice_Group tokens;
 	tokens.tokens = (Slice*)memory_page;
