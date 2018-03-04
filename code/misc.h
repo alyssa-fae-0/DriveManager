@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 
 
@@ -157,4 +157,64 @@ void get_best_size_for_bytes(u64 bytes, string &str)
 	}
 	str = std::to_string(val);
 	str += file_sizes[shifts];
+}
+
+void test_unicode_support()
+{
+	{
+		// create folder with unicode name
+
+		string unicode_folder_path = u8"C:\\dev\\";
+		string unicode_folder_name = u8"⚧";
+
+		const char unicode_name[] = "\xE2\x9A\xA7";
+
+		string unicode_folder = unicode_folder_path + unicode_folder_name;
+
+		cout << "Folder path: " << unicode_folder << endl;
+
+		std::wstring path_w = utf8_to_utf16(unicode_folder);
+
+		auto result = CreateDirectory(path_w.data(), 0);
+
+		if (!result)
+		{
+			cout << "Failed to create directory: " << unicode_folder << endl;
+			cout << "Error returned: " << GetLastError() << endl;
+		}
+		else
+			cout << "Successfully created directory: " << unicode_folder << endl;
+
+		cout << endl << endl;
+
+		// read that folder back in
+		{
+			string search_term(u8"C:\\dev\\*");
+			std::wstring search_term_w = utf8_to_utf16(search_term);
+			WIN32_FIND_DATA data;
+			HANDLE handle = FindFirstFile(search_term_w.data(), &data);
+			if (handle == INVALID_HANDLE_VALUE)
+			{
+				cout << "Error searching for: " << search_term << endl;
+			}
+			else
+			{
+				do {
+					string filename = utf16_to_utf8(data.cFileName);
+					cout << "Filename: " << filename << endl;
+					cout << "  ";
+					for (auto iter = filename.begin(); iter < filename.end(); iter++)
+					{
+						u8 code_point = (u8)(*iter);
+						printf("\\x%x", code_point);
+					}
+					cout << endl;
+				} while (FindNextFile(handle, &data));
+
+				FindClose(handle);
+			}
+		}
+
+		cout << endl << endl;
+	}
 }

@@ -10,6 +10,11 @@
 #include <iostream>
 #include <locale>
 
+#pragma warning (push)
+#pragma warning (disable : 4996)
+#include <wx\wx.h>
+#pragma warning (pop)
+
 using std::cout;
 using std::endl;
 using std::cin;
@@ -36,170 +41,89 @@ using std::cin;
 
 
 @TODO:
-	Add auto-complete to the driver/pseudo-terminal 
-		(probably need to do a graphics-based custom console for that)
-	Better "/" and "\" checking for get_size_of_directory()
 	@Robustness? Add function for checking if files are identical, once I add file processing
-	@Robustness Add error handling for invalid files in get_size_of_directory()
 	@Bug Figure out why I can't "cd c:\" but I can "cd c:\dev"
 
 @NEXT:
+	Add existing functionality to the GUI
+		Add support to Drag-and-drop folders onto the window to relocate/restore them
 
-	update relocate function to take a target, instead of a directory
-
-	Add function for relocating a folder to a backup location
-		(create symlink where folder was)
-	Add function for re-relocating a folder from a backup location
-		(put folder back where symlink was)
-	Figure out what to do with symlinked files/folders when copying them
-		Should I just recreate them as-is?
-*/
-
-/*
-static char szWindowClass[] = "win32app";
-static char szTitle[] = "Win32 Guided Tour Application";
-HINSTANCE Instance;
 */
 
 App_Settings Settings;
 
-/*
-LRESULT CALLBACK Window_Procedure(HWND window, UINT message, WPARAM w_param, LPARAM l_param)
+
+class MyApp : public wxApp
 {
-	PAINTSTRUCT paint_struct;
-	HDC device_context_handle;
-	CHAR greeting[] = "Hello, World!";
+public:
+	virtual bool OnInit();
+};
 
-	switch (message)
-	{
-	case WM_KEYDOWN:
-	{
-		// escape key pressed
-		if (w_param == VK_ESCAPE)
-		{
-			// exit application
-			PostQuitMessage(0);
-		}
-	}
-		break;
-		
-	case WM_PAINT:
-		device_context_handle = BeginPaint(window, &paint_struct);
+class MyFrame : public wxFrame
+{
+public:
+	MyFrame(const wxString& title, const wxPoint& pos, const wxSize& size);
+private:
+	void OnHello(wxCommandEvent& event);
+	void OnExit(wxCommandEvent& event);
+	void OnAbout(wxCommandEvent& event);
+	wxDECLARE_EVENT_TABLE();
+};
 
-		// Here your application is laid out.  
-		// For this introduction, we just print out "Hello, World!"  
-		// in the top left corner.  
+enum
+{
+	ID_Hello = 1
+};
 
-		TextOut(device_context_handle,
-			5, 5,
-			greeting, strlen(greeting));
-		// End application specific layout section.  
+wxBEGIN_EVENT_TABLE(MyFrame, wxFrame)
+EVT_MENU(ID_Hello, MyFrame::OnHello)
+EVT_MENU(wxID_EXIT, MyFrame::OnExit)
+EVT_MENU(wxID_ABOUT, MyFrame::OnAbout)
+wxEND_EVENT_TABLE()
+wxIMPLEMENT_APP(MyApp);
 
-		EndPaint(window, &paint_struct);
-		break;
-	case WM_DESTROY:
-		PostQuitMessage(0);
-		break;
-	default:
-		return DefWindowProc(window, message, w_param, l_param);
-		break;
-	}
-
-	return 0;
+bool MyApp::OnInit()
+{
+	MyFrame *frame = new MyFrame("Hello World", wxPoint(50, 50), wxSize(450, 340));
+	frame->Show(true);
+	return true;
 }
 
-
-
-int CALLBACK WinMain(
-	HINSTANCE instance,
-	HINSTANCE prev_instance,
-	LPSTR     cmd_line,
-	int       cmd_show
-)
+MyFrame::MyFrame(const wxString& title, const wxPoint& pos, const wxSize& size)
+	: wxFrame(NULL, wxID_ANY, title, pos, size)
 {
-	init_settings();
-
-	WNDCLASSEX wcex;
-
-	wcex.cbSize = sizeof(WNDCLASSEX);
-	wcex.style = CS_HREDRAW | CS_VREDRAW;
-	wcex.lpfnWndProc = Window_Procedure;
-	wcex.cbClsExtra = 0;
-	wcex.cbWndExtra = 0;
-	wcex.hInstance = instance;
-	wcex.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-	wcex.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-	wcex.lpszMenuName = NULL;
-	wcex.lpszClassName = szWindowClass;
-	wcex.hIconSm = LoadIcon(wcex.hInstance, IDI_APPLICATION);
-
-	if (!RegisterClassEx(&wcex))
-	{
-		MessageBox(
-			NULL,
-			"Call to RegisterClassEx failed!",
-			"Win32 Guided Tour",
-			NULL);
-
-		return 1;
-	}
-
-	Instance = instance;
-
-	// The parameters to CreateWindow explained:  
-	// szWindowClass: the name of the application  
-	// szTitle: the text that appears in the title bar  
-	// WS_OVERLAPPEDWINDOW: the type of window to create  
-	// CW_USEDEFAULT, CW_USEDEFAULT: initial position (x, y)  
-	// 500, 100: initial size (width, length)  
-	// NULL: the parent of this window  
-	// NULL: this application does not have a menu bar  
-	// instance: the first parameter from WinMain  
-	// NULL: not used in this application  
-	HWND window = CreateWindow(
-		szWindowClass,
-		szTitle,
-		WS_OVERLAPPEDWINDOW,
-		CW_USEDEFAULT, CW_USEDEFAULT,
-		500, 100,
-		NULL,
-		NULL,
-		instance,
-		NULL
-	);
-
-	if (!window)
-	{
-		MessageBox(
-			NULL,
-			"Call to CreateWindow failed!",
-			"Win32 Guided Tour",
-			NULL);
-
-		return 1;
-	}
-
-	// The parameters to ShowWindow explained:  
-	// window: the value returned from CreateWindow  
-	// cmd_show: the fourth parameter from WinMain  
-	ShowWindow(window, cmd_show);
-	UpdateWindow(window);
-
-
-	// Main message loop:  
-	MSG message;
-	while (GetMessage(&message, NULL, 0, 0))
-	{
-		TranslateMessage(&message);
-		DispatchMessage(&message);
-	}
-
-	return (int)message.wParam;
+	wxMenu *menuFile = new wxMenu;
+	menuFile->Append(ID_Hello, "&Hello...\tCtrl-H",
+		"Help string shown in status bar for this menu item");
+	menuFile->AppendSeparator();
+	menuFile->Append(wxID_EXIT);
+	wxMenu *menuHelp = new wxMenu;
+	menuHelp->Append(wxID_ABOUT);
+	wxMenuBar *menuBar = new wxMenuBar;
+	menuBar->Append(menuFile, "&File");
+	menuBar->Append(menuHelp, "&Help");
+	SetMenuBar(menuBar);
+	CreateStatusBar();
+	SetStatusText("Welcome to wxWidgets!");
 }
-*/
 
-int main(int argc, char *argv[])
+void MyFrame::OnExit(wxCommandEvent& event)
+{
+	Close(true);
+}
+
+void MyFrame::OnAbout(wxCommandEvent& event)
+{
+	wxMessageBox("This is a wxWidgets' Hello world sample",
+		"About Hello World", wxOK | wxICON_INFORMATION);
+}
+
+void MyFrame::OnHello(wxCommandEvent& event)
+{
+	wxLogMessage("Hello world from wxWidgets!");
+}
+
+int old_main(int argc, char *argv[])
 {
 	cout.imbue(std::locale(""));
 
@@ -215,15 +139,11 @@ int main(int argc, char *argv[])
 	string input;
 	bool should_run = true;
 
-	// debug{
 
-	string str(u8"Hello, 日本");
+	string str(u8"Hello, 日本.");
 	cout << str << endl;
 
-	//system("PAUSE");
-	//should_run = false;
-
-	// }debug
+	//test_unicode_support();
 
 	Slice_Group tokens;
 	tokens.tokens = (Slice*)memory_page;

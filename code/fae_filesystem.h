@@ -520,7 +520,7 @@ creation_result create_directory(string &directory_path)
 			auto result = GetLastError();
 			if (result == ERROR_ALREADY_EXISTS)
 			{
-				return cr_created;
+				return cr_existed;
 			}
 			else
 				return cr_failed;
