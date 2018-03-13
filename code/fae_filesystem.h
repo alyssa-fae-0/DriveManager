@@ -153,6 +153,51 @@ struct Filesystem_Node
 		cout << endl;
 	}
 
+	string get_last_dir_name()
+	{
+		// @copy-paste from pop()
+
+		int length = path.length();
+		if (length <= 0)
+		{
+			cerr << "Attempt to get last dir name from empty path." << endl;
+			return false;
+		}
+
+		int end = length;
+
+		// ignore any final separators
+		if (path[length - 1] == '\\' || path[length - 1] == '/')
+			end--;
+
+		// find first separator from right
+		int start = end;
+
+		auto iter = --path.end();
+		auto begin = path.begin();
+		bool found = false;
+		for (; iter > begin; iter--)
+		{
+			char c = *iter;
+			if (c == '\\' || c == '/')
+			{
+				found = true;
+				break;
+			}
+
+			start--;
+		}
+
+		if (!found)
+		{
+			cout << "Attempted to get last dir name, but no dir name was found." << endl;
+			return false;
+		}
+
+		string dir_name = path.substr(start, end - start);
+		return dir_name;
+	}
+
 	bool path_ends_in_separator()
 	{
 		int length = path.length();
@@ -385,6 +430,7 @@ struct App_Settings
 	Filesystem_Node backup_dir;
 	Filesystem_Node test_data_dir;
 	Filesystem_Node test_data_source;
+	bool confirm_on_quit;
 };
 
 extern App_Settings Settings;
@@ -392,9 +438,10 @@ extern App_Settings Settings;
 void init_settings()
 {
 	Settings.current_dir		= u8"C:\\dev";
-	Settings.backup_dir			= u8"C:\\dev\\bak";
+	Settings.backup_dir			= u8"D:\\bak";
 	Settings.test_data_dir		= u8"C:\\dev\\test_data";
 	Settings.test_data_source	= u8"C:\\dev\\test_data_source";
+	Settings.confirm_on_quit	= false;
 }
 
 
@@ -882,32 +929,36 @@ bool copy_node_recursive(Filesystem_Node &src_node, Filesystem_Node &dst_node)
 		}
 
 		// skip "." directory
-		FindNextFile(handle, &data);
+		bool found_file = FindNextFile(handle, &data);
 
 		// skip ".." directory
-		FindNextFile(handle, &data);
+		if(found_file)
+			found_file = FindNextFile(handle, &data);
 
-		bool error = false;
-		do
+		if (found_file)
 		{
-			// update the paths
-			src_node.push(utf16_to_utf8(data.cFileName).data());
-			dst_node.push(utf16_to_utf8(data.cFileName).data());
-
-			// throw everything into a recursive version of this function
-			error = !copy_node_recursive(src_node, dst_node);
-			src_node.pop();
-			dst_node.pop();
-
-			if(error)
+			bool error = false;
+			do
 			{
-				// close the file before we return
-				FindClose(handle);
-				return false;
-			}
+				// update the paths
+				src_node.push(utf16_to_utf8(data.cFileName).data());
+				dst_node.push(utf16_to_utf8(data.cFileName).data());
+
+				// throw everything into a recursive version of this function
+				error = !copy_node_recursive(src_node, dst_node);
+				src_node.pop();
+				dst_node.pop();
+
+				if (error)
+				{
+					// close the file before we return
+					FindClose(handle);
+					return false;
+				}
 
 
-		} while (FindNextFile(handle, &data));
+			} while (FindNextFile(handle, &data));
+		}
 
 		FindClose(handle);
 	}
@@ -968,10 +1019,12 @@ bool relocate_node(string &target_path, App_Settings &settings)
 	Filesystem_Node src_node(target_path);
 	if (!src_node.is_qualified())
 		src_node.prepend(settings.current_dir.path.data());
+	string target_dir_name = src_node.get_last_dir_name();
+
 
 	// create backup node
 	Filesystem_Node dst_node(settings.backup_dir.path.data());
-	dst_node.push(target_path.data());
+	dst_node.push(target_dir_name.data());
 
 	auto src_type = src_node.get_type();
 
@@ -1180,5 +1233,38 @@ void reset_test_data(App_Settings &settings)
 		"C:\\dev\\test_data_source\\DriveManager.exe",
 		false);
 		*/
-	
+}
+
+#include <shellapi.h>
+
+bool sh_copy(string& from, string& to)
+{
+	std::wstring from_path = utf8_to_utf16(from);
+	from_path.push_back(0);
+	from_path.push_back(0);
+
+	std::wstring to_path = utf8_to_utf16(to);
+	to.push_back(0);
+	to.push_back(0);
+
+	std::wstring title = utf8_to_utf16(u8"Copying Target");
+
+	SHFILEOPSTRUCT operation;
+	operation.hwnd = null;
+	operation.wFunc = FO_COPY;
+	operation.pFrom = from_path.data();
+	operation.pTo = to_path.data();
+	operation.fFlags = FOF_WANTNUKEWARNING;
+	operation.fAnyOperationsAborted = FALSE;
+	operation.hNameMappings = null;
+	operation.lpszProgressTitle = title.data();
+
+	int result = SHFileOperation(&operation);
+	if (result != 0)
+	{
+		// something went wrong
+		cerr << "SHFileOperation failed with error: " << result << endl;
+		return false;
+	}
+	return true;
 }
