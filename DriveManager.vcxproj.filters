@@ -35,5 +35,8 @@
     <ClInclude Include="code\fae_memory.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="code\wx_file_functions.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

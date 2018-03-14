@@ -1237,33 +1237,120 @@ void reset_test_data(App_Settings &settings)
 
 #include <shellapi.h>
 
+struct File_Operation
+{
+	SHFILEOPSTRUCT op_struct;
+	std::wstring from_path;
+	std::wstring to_path;
+	std::wstring title;
+};
+
+void set_operation(File_Operation& operation, int op, string& from, string& to, string title)
+{
+	operation.from_path = utf8_to_utf16(from);
+	operation.from_path.push_back(0);
+	operation.from_path.push_back(0);
+
+	operation.to_path = utf8_to_utf16(to);
+	operation.to_path.push_back(0);
+	operation.to_path.push_back(0);
+
+	operation.title = utf8_to_utf16(title);
+
+	operation.op_struct.hwnd					= null;
+	operation.op_struct.wFunc					= op;
+	operation.op_struct.pFrom					= operation.from_path.data();
+
+	if (to.empty())
+		operation.op_struct.pTo					= null;
+	else
+		operation.op_struct.pTo					= operation.to_path.data();
+
+	operation.op_struct.fFlags					= FOF_WANTNUKEWARNING;
+	operation.op_struct.fAnyOperationsAborted	= FALSE;
+	operation.op_struct.hNameMappings			= null;
+	operation.op_struct.lpszProgressTitle		= operation.title.data();
+}
+
 bool sh_copy(string& from, string& to)
 {
-	std::wstring from_path = utf8_to_utf16(from);
-	from_path.push_back(0);
-	from_path.push_back(0);
+	File_Operation operation;
+	set_operation(operation, FO_COPY, from, to, u8"Copying Target");
 
-	std::wstring to_path = utf8_to_utf16(to);
-	to.push_back(0);
-	to.push_back(0);
-
-	std::wstring title = utf8_to_utf16(u8"Copying Target");
-
-	SHFILEOPSTRUCT operation;
-	operation.hwnd = null;
-	operation.wFunc = FO_COPY;
-	operation.pFrom = from_path.data();
-	operation.pTo = to_path.data();
-	operation.fFlags = FOF_WANTNUKEWARNING;
-	operation.fAnyOperationsAborted = FALSE;
-	operation.hNameMappings = null;
-	operation.lpszProgressTitle = title.data();
-
-	int result = SHFileOperation(&operation);
+	int result = SHFileOperation(&operation.op_struct);
 	if (result != 0)
 	{
 		// something went wrong
-		cerr << "SHFileOperation failed with error: " << result << endl;
+		cerr << "SHFileOperation: Copy, failed with error: " << result << endl;
+		return false;
+	}
+	if (operation.op_struct.fAnyOperationsAborted != 0)
+	{
+		// user or something else aborted operation
+		cerr << "SHFileOperation: Copy, was aborted" << endl;
+		return false;
+	}
+	return true;
+}
+
+bool sh_delete(string& target)
+{
+	string no_to;
+	File_Operation operation;
+	set_operation(operation, FO_DELETE, target, no_to, u8"Deleting Target");
+	int result = SHFileOperation(&operation.op_struct);
+	if (result != 0)
+	{
+		// something went wrong
+		cerr << "SHFileOperation: Delete, failed with error: " << result << endl;
+		return false;
+	}
+	if (operation.op_struct.fAnyOperationsAborted != 0)
+	{
+		// user or something else aborted operation
+		cerr << "SHFileOperation: Delete, was aborted" << endl;
+		return false;
+	}
+	return true;
+}
+
+bool sh_rename(string& from, string& to)
+{
+	File_Operation operation;
+	set_operation(operation, FO_RENAME, from, to, u8"Renaming Target");
+
+	int result = SHFileOperation(&operation.op_struct);
+	if (result != 0)
+	{
+		// something went wrong
+		cerr << "SHFileOperation: Rename, failed with error: " << result << endl;
+		return false;
+	}
+	if (operation.op_struct.fAnyOperationsAborted != 0)
+	{
+		// user or something else aborted operation
+		cerr << "SHFileOperation: Rename, was aborted" << endl;
+		return false;
+	}
+	return true;
+}
+
+bool sh_move(string& from, string& to)
+{
+	File_Operation operation;
+	set_operation(operation, FO_MOVE, from, to, u8"Moving Target");
+
+	int result = SHFileOperation(&operation.op_struct);
+	if (result != 0)
+	{
+		// something went wrong
+		cerr << "SHFileOperation: Move, failed with error: " << result << endl;
+		return false;
+	}
+	if (operation.op_struct.fAnyOperationsAborted != 0)
+	{
+		// user or something else aborted operation
+		cerr << "SHFileOperation: Move, was aborted" << endl;
 		return false;
 	}
 	return true;

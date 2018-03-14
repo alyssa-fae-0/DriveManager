@@ -17,6 +17,8 @@
 #include <wx\progdlg.h>
 #pragma warning (pop)
 
+#include "wx_file_functions.h"
+
 #include "fae_lib.h"
 #include "fae_string.h"
 #include "fae_filesystem.h"
@@ -24,7 +26,6 @@
 using std::cout;
 using std::endl;
 using std::cin;
-
 
 /*
 
@@ -178,13 +179,10 @@ private:
 
 	void on_test_relocate_restore(wxCommandEvent& event)
 	{
-		string destination = string("D:\\bak\\sh_test\\");
-		string source = string("C:\\dev\\");
-		bool success = sh_copy(source, destination);
-		if (!success)
-		{
-			cout << "Relocate failed" << endl;
-		}
+
+
+		// @TODO: run this on a seperate thread so that it doesn't lock up the program
+
 		//wxProgressDialog* dialog = new wxProgressDialog("Relocate() Test", "Message text goes here:", 100, null, wxPD_CAN_ABORT | wxPD_ELAPSED_TIME);
 		//dialog->Show();
 		//wxSize size(800, 600);

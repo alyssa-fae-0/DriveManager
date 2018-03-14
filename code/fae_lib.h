@@ -15,7 +15,6 @@
 
 
 //#define fae_debug
-
 #ifdef fae_debug
 #include <crtdbg.h>
 #include <stdio.h>

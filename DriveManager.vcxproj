@@ -142,6 +142,7 @@
     <ClInclude Include="code\fae_memory.h" />
     <ClInclude Include="code\fae_string.h" />
     <ClInclude Include="code\misc.h" />
+    <ClInclude Include="code\wx_file_functions.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
