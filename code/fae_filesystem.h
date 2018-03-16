@@ -269,6 +269,9 @@ Node_Type get_node_type(wxFileName& path)
 
 bool get_target_of_symlink(wxFileName& link_path, Node_Type link_type, wxFileName& data_path)
 {
+	wxString link_path_name = link_path.GetFullPath();
+	wxString data_path_name = data_path.GetFullPath();
+
 	int open_flag = (link_type == nt_symlink_directory) ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL;																					 // file is 
 
 	HANDLE linked_handle = INVALID_HANDLE_VALUE;
@@ -531,12 +534,13 @@ bool copy_node(wxFileName& from, wxFileName& to)
 //@unicode
 bool create_symlink(wxFileName& link_name, wxFileName& target_name, bool directory)
 {
+	wxFileName link_dir = link_name;
+	link_dir.SetFullName(wxEmptyString);
+	if (!link_dir.DirExists())
+		create_directory_recursive(link_dir);
+
 	wxString link_path = link_name.GetFullPath();
 	wxString target_path = target_name.GetFullPath();
-	if (link_path.IsSameAs(u8"D:\\bak\\test_data\\symdirtest\\") && target_path.IsSameAs(u8"D:\\bak\\test_data\\symtest\\"))
-	{
-		cout << "stop here" << endl;
-	}
 	if (directory)
 	{
 		link_path.RemoveLast();
@@ -560,131 +564,124 @@ bool create_symlink(wxFileName& link_name, wxFileName& target_name, bool directo
 	}
 }
 
+bool copy_item(const wxString& item, const wxString& from, const wxString& to)
+{
+
+	wxFileName old_name = item;
+	wxString   old_path = old_name.GetFullPath();
+	wxString diff = item.substr(from.length(), item.length() - from.length());
+	wxFileName new_name = to + diff;
+	wxString   new_path = new_name.GetFullPath();
+
+	wxFileName new_dir = new_name.GetPath();
+	if(!new_dir.DirExists())
+		create_directory_recursive(new_dir);
+
+	Node_Type node_type = get_node_type(old_name);
+
+	switch (node_type)
+	{
+	case nt_normal_file:
+	{
+		bool success = CopyFile(old_path.wchar_str(), new_path.wchar_str(), true);
+		assert(success);
+		return true;
+	}
+
+	case nt_normal_directory:
+	{
+		auto result = create_directory_recursive(new_name);
+		assert(result == cr_created);
+		return true;
+	}
+
+	case nt_symlink_file:
+	{
+		wxFileName old_target;
+		bool success = get_target_of_symlink(old_name, node_type, old_target);
+		assert(success);
+
+		wxString old_target_path = old_target.GetFullPath();
+
+		// check if the target is within the directory we're copying
+		if (old_target_path.StartsWith(from))
+		{
+			wxString target_diff = old_target_path.substr(from.length(), old_target_path.length() - from.length());
+			wxFileName new_target_dir(to + target_diff);
+			bool success = create_symlink(new_name, new_target_dir, false);
+			assert(success);
+		}
+		else
+		{
+			// target points somewhere else; create it as it was
+			bool success = create_symlink(new_name, old_target, false);
+			assert(success);
+		}
+		return true;
+	}
+
+	case nt_symlink_directory:
+	{
+		wxFileName old_target;
+		bool success = get_target_of_symlink(old_name, node_type, old_target);
+		assert(success);
+
+		wxString old_target_path = old_target.GetFullPath();
+
+		// check if the target is within the directory we're copying
+		if (old_target_path.StartsWith(from))
+		{
+			wxString target_diff = old_target_path.substr(from.length(), old_target_path.length() - from.length());
+			wxFileName new_target_dir(to + target_diff);
+			bool success = create_symlink(new_name, new_target_dir, true);
+			assert(success);
+		}
+		else
+		{
+			// target points somewhere else; create it as it was
+			bool success = create_symlink(new_name, old_target, true);
+			assert(success);
+		}
+		// return ignore so we don't accidentally traverse into a symlink directory
+		return true;
+	}
+	}
+	return false;
+}
+
 // symlink-aware copier
 class File_Copier : public wxDirTraverser
 {
 public:
-	wxString source, dest;
-	size_t source_length = 0;
-	bool error;
+	wxString from;
+	wxString to;
+	bool success = true;
 
-	File_Copier(const wxString& source_dir, const wxString& dest_dir)
+	File_Copier(const wxString& _from, const wxString& _to)
 	{
-		source = source_dir;
-		dest = dest_dir;
-		source_length = source.length();
-		error = false;
-	}
-
-	virtual wxDirTraverseResult OnItem(const wxString item)
-	{
-		Node_Type node_type = get_node_type(item);
-
-		wxString diff_name = item.substr(source_length, item.length() - source_length);
-		wxFileName diff_filename = diff_name;
-		wxFileName new_item = dest;
-		if (node_type == nt_normal_directory || node_type == nt_symlink_directory)
-		{
-			new_item.AppendDir(diff_name);
-		}
-		else if (node_type == nt_normal_file || node_type == nt_symlink_file)
-		{
-			wxString diff_filename_path = diff_filename.GetPath();
-			if(!diff_filename_path.IsEmpty())
-				new_item.AppendDir(diff_filename.GetPath());
-			new_item.SetFullName(diff_filename.GetFullName());
-		}
-		else
-		{
-			error = true;
-			return wxDIR_STOP;
-		}
-
-		switch (node_type)
-		{
-		case nt_normal_file:
-		{
-			wxString new_item_path = new_item.GetFullPath();
-			bool success = CopyFile(item.wchar_str(), new_item.GetFullPath().wchar_str(), true);
-			assert(success);
-			return wxDIR_CONTINUE;
-		}
-
-		case nt_normal_directory:
-		{
-			auto result = create_directory_recursive(new_item);
-			assert(result == cr_created);
-			return wxDIR_CONTINUE;
-		}
-
-		case nt_symlink_file:
-		{
-			wxFileName link(item);
-			wxFileName target;
-			bool success = get_target_of_symlink(link, node_type, target);
-			assert(success);
-
-			wxString target_path = target.GetFullPath();
-
-			// check if the target is within the directory we're copying
-			if (target_path.StartsWith(source))
-			{
-				wxString target_diff = target_path.substr(source_length, target_path.length() - source_length);
-				wxFileName new_target_dir(dest, target_diff);
-				bool success = create_symlink(new_item, new_target_dir, false);
-				assert(success);
-			}
-			else
-			{
-				// target points somewhere else; create it as it was
-				bool success = create_symlink(new_item, target, false);
-				assert(success);
-			}
-			return wxDIR_CONTINUE;
-		}
-
-		case nt_symlink_directory:
-		{
-			wxFileName link(item, "");
-			wxFileName target;
-			bool success = get_target_of_symlink(link, node_type, target);
-			assert(success);
-
-			wxString target_path = target.GetFullPath();
-
-			// check if the target is within the directory we're copying
-			if (target_path.StartsWith(source))
-			{
-				wxString target_diff = target_path.substr(source_length, target_path.length() - source_length);
-				wxFileName new_target_dir(dest + target_diff, "");
-				bool success = create_symlink(new_item, new_target_dir, true);
-				assert(success);
-			}
-			else
-			{
-				// target points somewhere else; create it as it was
-				bool success = create_symlink(new_item, target, true);
-				assert(success);
-			}
-			// return ignore so we don't accidentally traverse into a symlink directory
-			return wxDIR_IGNORE;
-		}
-
-		default:
-			error = false;
-			return wxDIR_STOP;
-		}
+		from = _from;
+		to = _to;
 	}
 
 	// Inherited via wxDirTraverser
 	virtual wxDirTraverseResult OnFile(const wxString & filename) override
 	{
-		return OnItem(filename);
+		if (!copy_item(filename, from, to))
+		{
+			success = false;
+			return wxDIR_STOP;
+		}
+		return wxDIR_CONTINUE;
 	}
 
 	virtual wxDirTraverseResult OnDir(const wxString & dirname) override
 	{
-		return OnItem(dirname);
+		if (!copy_item(dirname, from, to))
+		{
+			success = false;
+			return wxDIR_STOP;
+		}
+		return wxDIR_CONTINUE;
 	}
 };
 
@@ -692,53 +689,23 @@ bool copy_node_symlink_aware(const wxString& from, const wxString& to)
 {
 	Node_Type node_type = get_node_type(from);
 
-	switch (node_type)
+	if (node_type == nt_normal_directory)
 	{
-	case nt_normal_file:
-	{
-		bool success = CopyFile(from.wchar_str(), to.wchar_str(), true);
-		assert(success);
-		return true;
-	}
-
-	case nt_normal_directory:
-	{
-		// copy folder from 'a' to 'b'
-		File_Copier copier(from, to);
-
-		// create target directory 
 		wxDir src_dir(from);
 		wxFileName to_name(to);
 
 		if (!to_name.DirExists())
 			create_directory_recursive(to_name);
+		File_Copier copier(from, to);
 		src_dir.Traverse(copier, wxEmptyString, wxDIR_DIRS | wxDIR_FILES | wxDIR_HIDDEN | wxDIR_NO_FOLLOW);
-		return !copier.error;
+		return copier.success;
 	}
-
-	case nt_symlink_file:
+	else
 	{
-		wxFileName link(from);
-		wxFileName target;
-		bool success = get_target_of_symlink(link, node_type, target);
-		assert(success);
-		success = create_symlink(link, target, false);
-		assert(success);
-		return true;
+		wxFileName file(from);
+		string target = pop(file);
+		return copy_item(target, from, to);
 	}
-
-	case nt_symlink_directory:
-	{
-		wxFileName link(from, "");
-		wxFileName target;
-		bool success = get_target_of_symlink(link, node_type, target);
-		assert(success);
-		success = create_symlink(link, target, true);
-		assert(success);
-		return true;
-	}
-	}
-	return false;
 }
 
 
