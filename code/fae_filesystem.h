@@ -239,7 +239,7 @@ Node_Type get_node_type(WIN32_FIND_DATA &data)
 	}
 }
 
-Node_Type get_node_type(wxString& path)
+Node_Type get_node_type(const wxString& path)
 {
 	WIN32_FIND_DATA data;
 
@@ -258,11 +258,13 @@ Node_Type get_node_type(wxString& path)
 Node_Type get_node_type(wxFileName& path)
 {
 	wxString fullpath = path.GetFullPath();
+	if (wxFileName::IsPathSeparator(fullpath.at(fullpath.length() - 1)))
+		fullpath.RemoveLast();
 	return get_node_type(fullpath);
 
 }
 
-// @incomplete: use wxFileName to do this @refactor
+// @BUG first letter keeps becoming "?"
 bool get_target_of_symlink(wxFileName& link_path, Node_Type link_type, wxFileName& data_path)
 {
 	int open_flag = (link_type == nt_symlink_directory) ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL;																					 // file is 
@@ -296,18 +298,18 @@ bool get_target_of_symlink(wxFileName& link_path, Node_Type link_type, wxFileNam
 		cout << u8"Failed to get link for symlink" << endl;
 		return false;
 	}
-	data_path = utf16_to_utf8(final_path);
-	//string path = utf16_to_utf8(final_path);
 
+	// @cleanup: this is literally a use of starts_with(), but on a cstring
+	string path = utf16_to_utf8(final_path);
 
-	//// @cleanup: this is literally a use of starts_with(), but on a cstring
+	// skip the first "\\?\" if it exists
+	if (starts_with(path, u8"\\\\?\\"))
+	{
+		size_t offset = 4;
+		path = path.substr(offset, path.length() - 4);
+	}
 
-	//// skip the first "\\?\" if it exists
-	//if (starts_with(path, u8"\\\\?\\"))
-	//{
-	//	size_t offset = 4;
-	//	path = path.substr(offset, path.length() - 4);
-	//}
+	data_path = path;
 
 	return true;
 }
@@ -325,10 +327,10 @@ extern App_Settings Settings;
 
 void init_settings()
 {
-	Settings.current_dir		= wxFileName(u8"C:\\dev");
-	Settings.backup_dir			= wxFileName(u8"D:\\bak");
-	Settings.test_data_dir		= wxFileName(u8"C:\\dev\\test_data");
-	Settings.test_data_source	= wxFileName(u8"C:\\dev\\test_data_source");
+	Settings.current_dir		= wxFileName(u8"C:\\dev\\");
+	Settings.backup_dir			= wxFileName(u8"D:\\bak\\");
+	Settings.test_data_dir		= wxFileName(u8"C:\\dev\\test_data\\");
+	Settings.test_data_source	= wxFileName(u8"C:\\dev\\test_data_source\\");
 	Settings.confirm_on_quit	= false;
 }
 
@@ -451,16 +453,13 @@ wxULongLong get_size(wxFileName& target)
 	}
 	return wxInvalidSize;
 }
+wxULongLong get_drive_space(wxFileName& node) 
+{
+	wxLongLong drive_space;
+	bool success = wxGetDiskSpace(wxFileName::GetVolumeString(node.GetVolume().at(0)), null, &drive_space);
+	return wxULongLong(drive_space.GetValue());
+}
 
-//u64 get_size(string& target)
-//{
-//	wxFileName node(target);
-//	if (!node.IsAbsolute())
-//	{
-//		node.MakeAbsolute();
-//	}
-//	return get_size(node);
-//}
 
 ////@unicode done
 //void print_current_directory(App_Settings &settings)
@@ -528,7 +527,12 @@ bool copy_node(wxFileName& from, wxFileName& to)
 //@unicode
 bool create_symlink(wxFileName& link_name, wxFileName& target_name, bool directory)
 {
-	if (CreateSymbolicLink(link_name.GetFullPath().wchar_str(), target_name.GetFullPath().wchar_str(), (directory) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0))
+	wxString link_path = link_name.GetFullPath();
+	link_path.RemoveLast();
+	wxString target_path = target_name.GetFullPath();
+	target_path.RemoveLast();
+
+	if (CreateSymbolicLink(link_path.wchar_str(), target_path.wchar_str(), (directory) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0))
 	{
 		cout << "Created symlink: " << target_name.GetFullPath() << endl << "  pointing to: " << link_name.GetFullPath() << endl;
 		return true;
@@ -586,13 +590,12 @@ bool relocate_node(wxFileName& target)
 	wxULongLong node_size = get_size(src_node);
 	wxString readable_node_size = wxFileName::GetHumanReadableSize(node_size);
 
-	wxLongLong drive_space;
-	bool success = wxGetDiskSpace(wxFileName::GetVolumeString(dst_node.GetVolume().at(0)), null, &drive_space);
-	wxULongLong drive_space_u = wxULongLong(drive_space.GetValue());
+	wxULongLong drive_space = get_drive_space(dst_node);
 	wxString readable_disk_space = wxFileName::GetHumanReadableSize(wxULongLong(drive_space.GetValue()));
 
+
 	// see if target will fit on 
-	if (node_size > drive_space_u)
+	if (node_size > drive_space)
 	{
 		// target won't fit on drive
 		return false;
@@ -638,10 +641,15 @@ bool relocate_node(wxFileName& target)
 
 bool restore_node(wxFileName& node)
 {
+	wxString node_path = node.GetFullPath();
+
 	// create source node
 	wxFileName primary_node(node);
 	if (!primary_node.IsAbsolute())
 		primary_node.MakeAbsolute();
+
+	bool is_dir = primary_node.IsDir();
+	wxString dir_string = primary_node.GetFullPath();
 
 	Node_Type src_type = get_node_type(primary_node);
 
@@ -666,12 +674,16 @@ bool restore_node(wxFileName& node)
 		cerr << "Failed to get symlink of node. Error: " << GetLastError();
 	}
 
-	auto node_size = bak_node.GetSize();
-	wxDiskspaceSize_t drive_space;
-	success = wxGetDiskSpace(primary_node.GetFullPath(), null, &drive_space);
+	wxString bak_node_path = bak_node.GetFullPath();
+
+	wxULongLong node_size = get_size(bak_node);
+	wxString readable_node_size = wxFileName::GetHumanReadableSize(node_size);
+
+	wxULongLong drive_space = get_drive_space(primary_node);
+	wxString readable_disk_space = wxFileName::GetHumanReadableSize(wxULongLong(drive_space.GetValue()));
 
 	// see if target will fit on 
-	if (node_size.GetValue() > (unsigned long long)drive_space.GetValue())
+	if (node_size > drive_space)
 	{
 		// target won't fit on drive
 		return false;
@@ -711,7 +723,7 @@ void reset_test_data()
 	if (Settings.test_data_dir.Exists())
 	{
 		cout << "Deleting backup dir" << endl;
-		delete_node(Settings.test_data_dir);
+		bool success = delete_node(Settings.test_data_dir);
 	}
 	else
 		cout << "Skipping backup dir because it doesn't exist" << endl;
@@ -719,7 +731,7 @@ void reset_test_data()
 
 	// copy test_data_source to test_data
 	cout << "Copying test_data" << endl;
-	copy_node(Settings.test_data_source, Settings.test_data_dir);
+	bool success = copy_node(Settings.test_data_source, Settings.test_data_dir);
 
 	/*
 	create_symlink(
