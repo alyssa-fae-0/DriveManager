@@ -26,6 +26,11 @@ inline void assert_expr(bool expr_val, const char* expr, const char* file, int l
 #define assert(expr) assert_expr((expr), (#expr), __FILE__, __LINE__)
 #endif
 
+void break_here()
+{
+	return;
+}
+
 
 //struct fae_string {
 //	u32 capacity;

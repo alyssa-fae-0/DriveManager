@@ -57,122 +57,19 @@ using std::cin;
 
 App_Settings Settings;
 
-// these constants are possible return value of wxDirTraverser::OnDir()
-//enum wxDirTraverseResult
-//{
-//	wxDIR_IGNORE = -1,      // ignore this directory but continue with others
-//	wxDIR_STOP,             // stop traversing
-//	wxDIR_CONTINUE          // continue into this directory
-//};
-
-// symlink-aware copier
-class File_Copier : public wxDirTraverser
-{
-public:
-	wxString source, dest;
-	size_t source_length = 0;
-
-	File_Copier(const wxString& source_dir, const wxString& dest_dir)
-	{
-		source = source_dir;
-		dest = dest_dir;
-		source_length = source.length();
-	}
-
-	//File_Copier(const wxFileName& source_dir, const wxFileName& dest_dir)
-	//{
-	//	source = source_dir.GetFullPath();
-	//	wxFileName dest_copy = dest_dir;
-	//	dest_copy.AppendDir(source_dir.GetDirs().Item(source_dir.GetDirCount() - 1));
-	//	dest = dest_copy.GetFullPath();
-	//}
-
-	virtual wxDirTraverseResult OnItem(const wxString, bool dir)
-	{
-
-	}
-
-	// Inherited via wxDirTraverser
-	virtual wxDirTraverseResult OnFile(const wxString & filename) override
-	{
-		wxString diff_name = filename.substr(source_length, filename.length() - source_length);
-		wxString new_file = dest + diff_name;
-		if (!CopyFile(filename.wchar_str(), new_file.wchar_str(), true))
-		{
-			int error = GetLastError();
-			cerr << error << endl;
-			return wxDIR_STOP;
-		}
-		return wxDIR_CONTINUE;
-	}
-
-	virtual wxDirTraverseResult OnDir(const wxString & dirname) override
-	{
-		wxString diff_name = dirname.substr(source_length, dirname.length() - source_length);
-		wxFileName new_dir = dest;
-		new_dir.AppendDir(diff_name);
-
-		Node_Type node_type = get_node_type(dirname);
-		if (node_type == nt_normal_directory)
-		{
-			// create normal directory
-			auto result = create_directory_recursive(new_dir);
-			assert(result == cr_created);
-			return wxDIR_CONTINUE;
-		}
-		else if (node_type == nt_symlink_directory)
-		{
-			// create symlink directory
-			wxFileName link(dirname, "");
-			wxFileName target;
-			bool success = get_target_of_symlink(link, node_type, target);
-			assert(success);
-
-			wxString target_path = target.GetFullPath();
-
-			// check if the target is within the directory we're copying
-			if (target_path.StartsWith(source))
-			{
-				wxString target_diff = target_path.substr(source_length, target_path.length() - source_length);
-				wxFileName new_target_dir(dest + target_diff, "");
-				bool success = create_symlink(new_dir, new_target_dir, true);
-				assert(success);
-			}
-			else
-			{
-				// target points somewhere else; create it as it was
-				bool success = create_symlink(new_dir, target, true);
-				assert(success);
-			}
-			// return ignore so we don't accidentally traverse into a symlink directory
-			return wxDIR_IGNORE;
-		}
-		else
-			return wxDIR_STOP;
-	}
-
-	virtual wxDirTraverseResult OnOpenError(const wxString & dirname) override
-	{
-		return wxDirTraverseResult();
-	}
-};
-
 void run_tests()
 {
 	// delete whatever's in the test_data folder
 	delete_node(Settings.test_data_dir);
 
-	// copy folder from 'a' to 'b'
-	File_Copier copier(Settings.test_data_source.GetFullPath(), Settings.test_data_dir.GetFullPath());
+	push_dir(Settings.backup_dir, u8"test_data");
+	delete_node(Settings.backup_dir);
+	pop(Settings.backup_dir);
 
-	// create target directory 
-	wxDir src_dir(Settings.test_data_source.GetFullPath());
-	if (!Settings.test_data_dir.DirExists())
-		create_directory_recursive(Settings.test_data_dir);
-	src_dir.Traverse(copier, wxEmptyString, wxDIR_DIRS | wxDIR_FILES | wxDIR_HIDDEN | wxDIR_NO_FOLLOW);
+	copy_node_symlink_aware(Settings.test_data_source.GetFullPath(), Settings.test_data_dir.GetFullPath());
 
-	
-
+	assert(relocate_node(Settings.test_data_dir));
+	assert(restore_node(Settings.test_data_dir));
 }
 
 struct Event_IDs
