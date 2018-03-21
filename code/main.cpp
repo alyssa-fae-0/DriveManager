@@ -6,6 +6,7 @@
 #include <string>
 #include <iostream>
 #include <locale>
+#include <ostream>
 
 #pragma warning (push)
 #pragma warning (disable : 4996)
@@ -20,6 +21,8 @@
 #include "fae_lib.h"
 #include "fae_string.h"
 #include "fae_filesystem.h"
+#include "console.h"
+#include "new_filesystem.h"
 
 using std::cout;
 using std::endl;
@@ -78,8 +81,8 @@ struct Event_IDs
 	int open_dir_picker;
 	int relocate_dir_picker;
 	int relocate_restore_test_button;
-	//int test_source_name;
-	//int test_destination_name;
+	int console_id;
+	int scroll_button;
 	//int test_progress_percent;
 };
 
@@ -91,10 +94,16 @@ void set_IDs()
 	ID.open_dir_picker = wxNewId();
 	ID.relocate_dir_picker = wxNewId();
 	ID.relocate_restore_test_button = wxNewId();
+	ID.console_id = wxNewId();
+	ID.scroll_button = wxNewId();
 	//ID.test_source_name = wxNewId();
 	//ID.test_destination_name = wxNewId();
 	//ID.test_progress_percent = wxNewId();
 }
+
+wxTextCtrl* text_console = null;
+ostream* Console = null;
+
 
 class MyFrame : public wxFrame
 {
@@ -106,8 +115,9 @@ public:
 	{
 		init_settings();
 		set_IDs();
-
-		run_tests();
+		text_console = new wxTextCtrl(this, ID.console_id, "Console Log:\n", wxDefaultPosition, wxDefaultSize, wxTE_MULTILINE | wxTE_READONLY | wxTE_BESTWRAP);
+		Console = new std::ostream(text_console);
+		con << "Hello world" << endl;
 
 		Bind(wxEVT_CLOSE_WINDOW, &MyFrame::OnClose, this);
 		Bind(wxEVT_MENU, &MyFrame::OnExit, this, wxID_EXIT);
@@ -116,6 +126,7 @@ public:
 		Bind(wxEVT_MENU, &MyFrame::OnDirPicker, this, ID.open_dir_picker);
 		Bind(wxEVT_DIRPICKER_CHANGED, &MyFrame::OnDirPickerChanged, this, ID.relocate_dir_picker);
 		Bind(wxEVT_BUTTON, &MyFrame::on_test_relocate_restore, this, ID.relocate_restore_test_button);
+		//Bind(wxEVT_BUTTON, &MyFrame::on_scroll_button, this, ID.scroll_button);
 		
 
 		wxMenu *menuFile = new wxMenu;
@@ -161,8 +172,9 @@ public:
 		window_sizer->Add(dir, 1, wxEXPAND, 0);
 
 		window_sizer->Add(new wxButton(this, ID.relocate_restore_test_button, "Test Relocate/Restore"), 0, 0, 0);
-
-
+		//window_sizer->Add(new wxButton(this, ID.scroll_button, "Scroll to bottom"), 0, 0, 0);
+		window_sizer->Add(text_console, 1, wxEXPAND, 0);
+		//scroll_console();
 
 		//wx
 		
@@ -192,13 +204,21 @@ public:
 
 private:
 
+	void on_scroll_button(wxCommandEvent& event)
+	{
+		//scroll_console();
+	}
+
 	void on_test_relocate_restore(wxCommandEvent& event)
 	{
-		reset_test_data();
+		test_copy_one_dir_to_another();
+		//test_list_items_in_dir();
 
-		wxFileName dir = Settings.test_data_dir;
-		bool success = relocate_node(dir);
-		success = restore_node(dir);
+		//reset_test_data();
+
+		//wxFileName dir = Settings.test_data_dir;
+		//bool success = relocate_node(dir);
+		//success = restore_node(dir);
 
 		// @TODO: run this on a seperate thread so that it doesn't lock up the program
 

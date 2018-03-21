@@ -17,6 +17,8 @@
 #include <wx\dir.h>
 #pragma warning (pop)
 
+#include "settings.h"
+
 #define notify(text) {wxNotificationMessage _message("Notice", wxString(text)); _message.Show();}
 
 using std::cerr;
@@ -317,26 +319,6 @@ bool get_target_of_symlink(wxFileName& link_path, Node_Type link_type, wxFileNam
 	data_path = path;
 
 	return true;
-}
-
-struct App_Settings
-{
-	wxFileName current_dir;
-	wxFileName backup_dir;
-	wxFileName test_data_dir;
-	wxFileName test_data_source;
-	bool confirm_on_quit;
-};
-
-extern App_Settings Settings;
-
-void init_settings()
-{
-	Settings.current_dir		= wxFileName(u8"C:\\dev\\");
-	Settings.backup_dir			= wxFileName(u8"D:\\bak\\");
-	Settings.test_data_dir		= wxFileName(u8"C:\\dev\\test_data\\");
-	Settings.test_data_source	= wxFileName(u8"C:\\dev\\test_data_source\\");
-	Settings.confirm_on_quit	= false;
 }
 
 enum creation_result
@@ -880,7 +862,7 @@ bool restore_node(wxFileName& node)
 
 void reset_test_data()
 {
-	cout << "Resetting test data" << endl;
+	cout << "Resetting test_list_items_in_dir data" << endl;
 
 	// delete backup_dir
 	if (Settings.test_data_dir.Exists())

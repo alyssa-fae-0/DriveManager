@@ -35,5 +35,14 @@
     <ClInclude Include="code\fae_memory.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="code\console.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="code\new_filesystem.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="code\settings.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

@@ -89,6 +89,8 @@
     </ClCompile>
     <Link>
       <AdditionalLibraryDirectories>C:\api\wx\lib\vc141_dll;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <SubSystem>
+      </SubSystem>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -137,11 +139,14 @@
     <ClCompile Include="code\main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="code\console.h" />
     <ClInclude Include="code\fae_filesystem.h" />
     <ClInclude Include="code\fae_lib.h" />
     <ClInclude Include="code\fae_memory.h" />
     <ClInclude Include="code\fae_string.h" />
     <ClInclude Include="code\misc.h" />
+    <ClInclude Include="code\new_filesystem.h" />
+    <ClInclude Include="code\settings.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
