@@ -1,14 +1,6 @@
 #pragma once
 #include "fae_lib.h"
 
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-
-#include <iostream>
-
-using std::cout;
-using std::endl;
-
 const int max_memory_pages = 1024;
 struct Memory_Arena
 {

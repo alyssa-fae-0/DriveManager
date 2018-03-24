@@ -1,32 +1,13 @@
-﻿#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-
-#include <stdlib.h>
-#include <stdio.h>
-#include <string>
-#include <iostream>
-#include <locale>
-#include <ostream>
-
-#pragma warning (push)
-#pragma warning (disable : 4996)
-#include <wx\wx.h>
-#include <wx\filepicker.h>
-#include <wx\listctrl.h>
-#include <wx\sizer.h>
-#include <wx\dirctrl.h>
-#include <wx\progdlg.h>
-#pragma warning (pop)
-
+﻿#include "stdafx.h"
 #include "fae_lib.h"
 #include "fae_string.h"
 #include "fae_filesystem.h"
 #include "console.h"
 #include "new_filesystem.h"
+#include "dir_data_view.h"
 
-using std::cout;
-using std::endl;
-using std::cin;
+
+
 
 /*
 
@@ -60,19 +41,32 @@ using std::cin;
 
 App_Settings Settings;
 
+//struct Test_Result
+//{
+//	const char* expression;
+//	bool success;
+//};
+//
+//vector<Test_Result> tests;
+//
+//#define Test(name) void name() 
+//#define Require(expression) tests.push_back({#expression, expression});
+//#define test_are_equal(a,b) 
+
+
 void run_tests()
 {
-	// delete whatever's in the test_data folder
-	delete_node(Settings.test_data_dir);
+	// get_name test
+	{
+		wxString result = "test_data";
+		assert(get_name("C:\\dev\\test_data") == result);
+		assert(get_name("C:\\dev\\test_data\\") == result);
+	}
 
-	push_dir(Settings.backup_dir, u8"test_data");
-	delete_node(Settings.backup_dir);
-	pop(Settings.backup_dir);
-
-	copy_node_symlink_aware(Settings.test_data_source.GetFullPath(), Settings.test_data_dir.GetFullPath());
-
-	assert(relocate_node(Settings.test_data_dir));
-	assert(restore_node(Settings.test_data_dir));
+	// get_size test
+	{
+		assert(get_size(Settings.test_data_source.GetFullPath()) == 759949);
+	}
 }
 
 struct Event_IDs
@@ -80,7 +74,7 @@ struct Event_IDs
 	int Hello;
 	int open_dir_picker;
 	int relocate_dir_picker;
-	int relocate_restore_test_button;
+	int test_button;
 	int console_id;
 	int scroll_button;
 	//int test_progress_percent;
@@ -93,7 +87,7 @@ void set_IDs()
 	ID.Hello = wxNewId();
 	ID.open_dir_picker = wxNewId();
 	ID.relocate_dir_picker = wxNewId();
-	ID.relocate_restore_test_button = wxNewId();
+	ID.test_button = wxNewId();
 	ID.console_id = wxNewId();
 	ID.scroll_button = wxNewId();
 	//ID.test_source_name = wxNewId();
@@ -105,6 +99,7 @@ wxTextCtrl* text_console = null;
 ostream* Console = null;
 
 
+
 class MyFrame : public wxFrame
 {
 
@@ -113,11 +108,18 @@ public:
 	MyFrame(const wxString& title, const wxPoint& pos, const wxSize& size)
 		: wxFrame(NULL, wxID_ANY, title, pos, size)
 	{
+		panel = null;
+		ctrl = null;
+		model = null;
+
 		init_settings();
 		set_IDs();
 		text_console = new wxTextCtrl(this, ID.console_id, "Console Log:\n", wxDefaultPosition, wxDefaultSize, wxTE_MULTILINE | wxTE_READONLY | wxTE_BESTWRAP);
 		Console = new std::ostream(text_console);
-		con << "Hello world" << endl;
+		con << "New NEW Build HYPE" << endl;
+
+		run_tests();
+
 
 		Bind(wxEVT_CLOSE_WINDOW, &MyFrame::OnClose, this);
 		Bind(wxEVT_MENU, &MyFrame::OnExit, this, wxID_EXIT);
@@ -125,9 +127,9 @@ public:
 		Bind(wxEVT_MENU, &MyFrame::OnHello, this, ID.Hello);
 		Bind(wxEVT_MENU, &MyFrame::OnDirPicker, this, ID.open_dir_picker);
 		Bind(wxEVT_DIRPICKER_CHANGED, &MyFrame::OnDirPickerChanged, this, ID.relocate_dir_picker);
-		Bind(wxEVT_BUTTON, &MyFrame::on_test_relocate_restore, this, ID.relocate_restore_test_button);
+		Bind(wxEVT_BUTTON, &MyFrame::on_test_button, this, ID.test_button);
 		//Bind(wxEVT_BUTTON, &MyFrame::on_scroll_button, this, ID.scroll_button);
-		
+
 
 		wxMenu *menuFile = new wxMenu;
 		menuFile->Append(ID.Hello, "&Hello...\tCtrl-H", "Help string shown in status bar for this menu item");
@@ -137,23 +139,24 @@ public:
 		wxMenu *menuHelp = new wxMenu;
 		menuHelp->Append(wxID_ABOUT);
 
-		wxMenu *menuDir = new wxMenu;
-		menuDir->Append(ID.open_dir_picker, "Show Dir Picker", "Show Dir Picker");
+		//wxMenu *menuDir = new wxMenu;
+		//menuDir->Append(ID.open_dir_picker, "Show Dir Picker", "Show Dir Picker");
 
 		wxMenuBar *menuBar = new wxMenuBar;
 		menuBar->Append(menuFile, "&File");
 		menuBar->Append(menuHelp, "&Help");
-		menuBar->Append(menuDir,  "&Dir");
+		//menuBar->Append(menuDir,  "&Dir");
 		SetMenuBar(menuBar);
 		CreateStatusBar();
 		SetStatusText("Welcome to wxWidgets!");
 
-		wxBoxSizer *window_sizer = new wxBoxSizer(wxVERTICAL);
 
-		// use this for setting App_Settings.directories later
+		wxBoxSizer* window_sizer = new wxBoxSizer(wxVERTICAL);
+
+		// Settings
 		wxBoxSizer* settings_sizer = new wxBoxSizer(wxHORIZONTAL);
 		settings_sizer->Add(
-			new wxStaticText(this, -1, "Backup Directory:", wxDefaultPosition, wxDefaultSize), 
+			new wxStaticText(this, wxID_ANY, "Backup Directory:", wxDefaultPosition, wxDefaultSize),
 			0, 0, 0);
 
 		settings_sizer->AddSpacer(10);
@@ -165,77 +168,75 @@ public:
 		//settings_sizer->SetSizeHints(this);
 		window_sizer->Add(settings_sizer, 0, wxEXPAND, 0);
 
-		auto dir = new wxGenericDirCtrl(this, -1, wxDirDialogDefaultFolderStr, wxDefaultPosition, wxDefaultSize, wxDIRCTRL_MULTIPLE, "*.*");
-		dir->ShowHidden(true);
-		dir->SetDefaultPath("c:\\api\\wx\\lib\\vc141_dll\\");
-		dir->ExpandPath(dir->GetDefaultPath());
-		window_sizer->Add(dir, 1, wxEXPAND, 0);
-
-		window_sizer->Add(new wxButton(this, ID.relocate_restore_test_button, "Test Relocate/Restore"), 0, 0, 0);
-		//window_sizer->Add(new wxButton(this, ID.scroll_button, "Scroll to bottom"), 0, 0, 0);
-		window_sizer->Add(text_console, 1, wxEXPAND, 0);
-		//scroll_console();
-
-		//wx
-		
-		/*auto list_control = new wxListCtrl(this);
-		auto list_item = new wxListItem();
-		list_item->SetId(0);
-		list_item->SetMask(wxLIST_MASK_TEXT);
-		list_control->InsertItem(*list_item);
-
-		wxString text = "Item ";
-		for (int i = 0; i < 26; i++)
+		// data view control dataviewctrl
 		{
-			list_item->SetText(text + (char)('A' + i));
-			list_control->InsertItem(*list_item);
+			panel = new wxPanel(this, wxID_ANY);
+
+			// Navigation View
+			ctrl = new wxDataViewCtrl(panel, wxID_ANY);
+			model = new dir_data_view_model(Settings.test_data_source.GetFullPath());
+			ctrl->AssociateModel(model.get());
+			
+			auto text_renderer = new wxDataViewTextRenderer("string", wxDATAVIEW_CELL_INERT);
+			wxDataViewColumn* col0 = new wxDataViewColumn("Path", text_renderer, 0, 200, 
+				wxALIGN_LEFT, wxDATAVIEW_COL_SORTABLE | wxDATAVIEW_COL_RESIZABLE);
+			ctrl->AppendColumn(col0);
+
+			col0->SetSortOrder(false);
+
+			text_renderer = new wxDataViewTextRenderer("string", wxDATAVIEW_CELL_INERT);
+			wxDataViewColumn* col1 = new wxDataViewColumn("Node Type", text_renderer, 1, 100, 
+				wxALIGN_LEFT, wxDATAVIEW_COL_SORTABLE | wxDATAVIEW_COL_RESIZABLE);
+			ctrl->AppendColumn(col1);
+
+			text_renderer = new wxDataViewTextRenderer("string", wxDATAVIEW_CELL_INERT);
+			wxDataViewColumn* col2 = new wxDataViewColumn("Size", text_renderer, 2, 100, 
+				wxALIGN_LEFT, wxDATAVIEW_COL_SORTABLE | wxDATAVIEW_COL_RESIZABLE);
+			ctrl->AppendColumn(col2);
+
+
+
+
+
+			wxSizer *panel_sizer = new wxBoxSizer(wxVERTICAL);
+			ctrl->SetMinSize(wxSize(400, 200));
+			panel_sizer->Add(ctrl, 1, wxGROW | wxALL, 5);
+
+			panel->SetSizerAndFit(panel_sizer);
+			window_sizer->Add(panel, 1, wxEXPAND, 0);
 		}
 
-		sizer->Add(list_control, 1, wxEXPAND, 0);*/
+		if(false) // directory browser -- buggy with symlinks
+		{
+			auto dir = new wxGenericDirCtrl(this, -1, wxDirDialogDefaultFolderStr, wxDefaultPosition, wxDefaultSize, wxDIRCTRL_MULTIPLE, "*.*");
+			dir->ShowHidden(true);
+			dir->SetDefaultPath("c:\\api\\wx\\lib\\vc141_dll\\");
+			dir->ExpandPath(dir->GetDefaultPath());
+			window_sizer->Add(dir, 1, wxEXPAND, 0);
+		}
 
-		//sizer->Add(new wxButton(this, -1, "A Really Big Button"), 0, wxEXPAND, 0);
-		//sizer->Add(new wxButton(this, -1, "Tiny Button"), 0, wxEXPAND, 0);
+		// Misc utilities
+		window_sizer->Add(new wxButton(this, ID.test_button, "Run Test"), 0, wxEXPAND, 0);
+		window_sizer->Add(text_console, 1, wxEXPAND, 0);
+		con << endl;
 
-		// use this for setting App_Settings.directories later
-		//sizer->Add(new wxDirPickerCtrl(this, -1, "path", "message"));
-		//sizer->SetSizeHints(this);
-		SetSizer(window_sizer);
+		SetSizerAndFit(window_sizer);
 	}
+
+	wxPanel* panel;
+	wxDataViewCtrl* ctrl;
+	wxObjectDataPtr<dir_data_view_model> model;
 
 private:
 
-	void on_scroll_button(wxCommandEvent& event)
+	void on_test_button(wxCommandEvent& event)
 	{
-		//scroll_console();
-	}
-
-	void on_test_relocate_restore(wxCommandEvent& event)
-	{
+		con << "Starting tests." << endl;
+		test_list_items_in_dir();
 		test_copy_one_dir_to_another();
-		//test_list_items_in_dir();
-
-		//reset_test_data();
-
-		//wxFileName dir = Settings.test_data_dir;
-		//bool success = relocate_node(dir);
-		//success = restore_node(dir);
-
-		// @TODO: run this on a seperate thread so that it doesn't lock up the program
-
-		//wxProgressDialog* dialog = new wxProgressDialog("Relocate() Test", "Message text goes here:", 100, null, wxPD_CAN_ABORT | wxPD_ELAPSED_TIME);
-		//dialog->Show();
-		//wxSize size(800, 600);
-		//wxWindow* progress_box = new wxWindow(this, -1, wxDefaultPosition, size, wxBORDER_DEFAULT, "Test Dialog");
-		//progress_box->Show();
-
-		//auto sizer = dialog->CreateTextSizer("Message");
-		//sizer->Add(new wxStaticText(this, -1, "Other Message"), 0, 0, 0);
-		//sizer->SetSizeHints(this);
-		//wxWindow* dialog_window = dialog->GetContentWindow();
-		//wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
-		//sizer->Add(new wxStaticText(dialog_window, -1, "Progress here:"), 0, wxEXPAND, 0);
-		//sizer->SetSizeHints(dialog_window);
-		//dialog->Show();
+		test_relocate_dir();
+		test_restore_dir();
+		con << "Tests finished successfully." << endl;
 	}
 
 	void OnDirPicker(wxCommandEvent& event)
@@ -305,8 +306,10 @@ private:
 class MyApp : public wxApp
 {
 public:
-	virtual bool OnInit()
+	virtual bool OnInit() override
 	{
+		if (!wxApp::OnInit())
+			return false;
 		MyFrame *frame = new MyFrame("Hello World", wxDefaultPosition, wxSize(450, 340));
 		frame->Show(true);
 		return true;

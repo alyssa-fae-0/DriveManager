@@ -1,10 +1,8 @@
 #pragma once
-
 #include "fae_lib.h"
+
 #include "fae_memory.h"
-#include <string>
-#include <vector>
-using std::string;
+
 
 std::string utf16_to_utf8(const wchar_t* wstr)
 {

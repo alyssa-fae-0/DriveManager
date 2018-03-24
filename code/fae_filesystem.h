@@ -1,30 +1,10 @@
 #pragma once
+#include "fae_lib.h"
 
 #include "fae_string.h"
-
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-
-#include <iostream>
-#include <locale>
-#include <shellapi.h>
-
-#pragma warning (push)
-#pragma warning (disable : 4996)
-#include <wx\wx.h>
-#include <wx\filename.h>
-#include <wx\notifmsg.h>
-#include <wx\dir.h>
-#pragma warning (pop)
-
 #include "settings.h"
 
 #define notify(text) {wxNotificationMessage _message("Notice", wxString(text)); _message.Show();}
-
-using std::cerr;
-using std::cout;
-using std::endl;
-using std::cin;
 
 string to_string(const wxString& str)
 {

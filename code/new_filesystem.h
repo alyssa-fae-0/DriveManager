@@ -1,40 +1,105 @@
 #pragma once
+#include "fae_lib.h"
 
 #include "console.h"
 #include "settings.h"
+#include "fae_filesystem.h"
 
-#pragma warning (push)
-#pragma warning (disable : 4996)
-#include <wx\wx.h>
-#include <wx\filename.h>
-#pragma warning (pop)
-
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-
-Node_Type get_file_type(wxString& path)
+wxULongLong get_size(const wxString& path, Node_Type type = nt_not_exist)
 {
-	wxString path_name = path;
-	if (wxFileName::IsPathSeparator(path_name.at(path_name.length() - 1)))
-		path_name.RemoveLast();
+	if (type == nt_not_exist)
+		type = get_node_type(path);
 
-	WIN32_FIND_DATA data;
-	HANDLE handle = FindFirstFile(path_name.wchar_str(), &data);
-	Node_Type type = nt_error;
-	if (handle == INVALID_HANDLE_VALUE)
+	if (!exists(type))
 	{
-		return nt_not_exist;
+		con << "Error getting size for: " << path << endl;
+		return wxInvalidSize;
 	}
-	type = get_node_type(data);
-	FindClose(handle);
-	return type;
+
+	switch (type)
+	{
+	case nt_symlink_file:
+		return 0;
+
+	case nt_normal_file:
+		return wxFileName::GetSize(path);
+
+	case nt_symlink_directory:
+		return 0;
+
+	case nt_normal_directory:
+{
+		wxULongLong node_size = 0;
+		wxDir dir(path);
+		if (!dir.IsOpened())
+		{
+			cerr << "Failed to open dir" << endl;
+			return wxInvalidSize;
+		}
+
+		wxArrayString files;
+		size_t num_files = dir.GetAllFiles(path, &files, wxEmptyString, wxDIR_FILES | wxDIR_DIRS | wxDIR_HIDDEN | wxDIR_NO_FOLLOW);
+		for (size_t i = 0; i < num_files; i++)
+		{
+			wxString& file = files[i];
+			Node_Type file_type = get_node_type(file);
+			if (file_type != nt_normal_file)
+				continue;
+			auto sub_size = wxFileName::GetSize(file);
+			node_size += sub_size;
+		}
+		return node_size;
+	}
+	}
+	con << "ERROR: This should be unreachable." << endl;
+	return wxInvalidSize;
 }
 
-void traverse(wxString& filename)
+// Returns true if the directory was successfully created, false otherwise. 
+bool create_dir_recursively(const wxString& dir)
 {
-	Node_Type file_type = get_file_type(filename);
-	con << filename << ": " << name(file_type) << endl;
+	return wxDir::Make(dir, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL);
 }
+
+// WARNING: THIS DELETES EVERYTHING IN THE DIR!!! USE WITH CAUTION!
+// Returns true if the directory was successfully deleted, false otherwise. 
+bool delete_dir_recursively(const wxString& dir)
+{
+	return wxDir::Remove(dir, wxPATH_RMDIR_RECURSIVE);
+}
+
+bool delete_target(const wxString& target)
+{
+	Node_Type type = get_node_type(target);
+	bool success = false;
+	switch (type)
+	{
+	case nt_normal_file:
+	case nt_symlink_file:
+		success = DeleteFile(target.wchar_str());
+		break;
+
+	case nt_normal_directory:
+		success = delete_dir_recursively(target);
+		break;
+
+	case nt_symlink_directory:
+		success = RemoveDirectory(target.wchar_str());
+		break;
+
+	default:
+		con << "ERROR: invalid target: '" << target << "'." << endl;
+		return false;
+	}
+	assert(success);
+	return success;
+}
+
+//void traverse(wxString& filename)
+//{
+//	Node_Type file_type = get_file_type(filename);
+//	con << filename << ": " << name(file_type) << endl;
+//}
 
 struct File_Record {
 	wxString filename;
@@ -52,7 +117,7 @@ void list_items_in_dir(wxString& dir_string, int depth, std::vector<File_Record>
 		do {
 			//con << "Found file: " << filename << endl;
 			wxString fullname = dir_string + wxFileName::GetPathSeparator() + filename;
-			Node_Type file_type = get_file_type(fullname);
+			Node_Type file_type = get_node_type(fullname);
 			records.push_back({filename, file_type});
 			for (int i = 0; i < depth; i++)
 				con << "     ";
@@ -115,16 +180,22 @@ bool copy_normal_file(const wxString& source, const wxString& dest) {
 		return true;
 }
 
-bool get_target_of_symlink(const wxString& link_path, bool dir, wxString& target_out)
+bool get_target_of_symlink(const wxString& link_path, wxString& target_out)
 {
-
-	int open_flag = (dir) ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL;																					 // file is 
+	Node_Type type = get_node_type(link_path);
+	int open_flag = (type == nt_symlink_directory) ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL;																					 // file is 
 
 	HANDLE linked_handle = INVALID_HANDLE_VALUE;
+	wxWritableWCharBuffer link_path_w = link_path.wchar_str();
+	if (wxFileName::IsPathSeparator(link_path_w[link_path_w.length()]))
+	{
+		// windows doesn't want a trailing slash at the end of filenames, so remove it
+		link_path_w.data()[link_path_w.length() - 1] = 0;
+	}
 
 	{
 		linked_handle = CreateFile(
-			link_path.wchar_str(),	// file to open
+			link_path_w,	// file to open
 			GENERIC_READ,			// open for reading
 			FILE_SHARE_READ,		// share for reading
 			NULL,					// default security
@@ -165,21 +236,27 @@ bool get_target_of_symlink(const wxString& link_path, bool dir, wxString& target
 	return true;
 }
 
-bool copy_symlink(const wxString& source, const wxString& dest, Node_Type type)
+bool create_symlink(const wxString& link_source, const wxString& target)
 {
-	wxString target;
-	if (!get_target_of_symlink(source, type == nt_symlink_directory, target))
-	{
-		con << "ERROR: Unable to get the target of symbolic link file: " << source << endl;
-		return false;
-	}
-	auto result = CreateSymbolicLink(dest.wchar_str(), target.wchar_str(), (type == nt_symlink_directory) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0);
+	Node_Type type = get_node_type(target);
+	auto result = CreateSymbolicLink(link_source.wchar_str(), target.wchar_str(), (type == nt_symlink_directory || type == nt_normal_directory) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0);
 	if (!result)
 	{
-		con << "ERROR: Unable to create symbolic link: " << dest << " -> " << target << endl;
+		con << "ERROR: Unable to create symbolic link: " << link_source << " -> " << target << endl;
 		return false;
 	}
 	return true;
+}
+
+bool copy_symlink(const wxString& source, const wxString& dest)
+{
+	wxString target;
+	if (!get_target_of_symlink(source, target))
+	{
+		con << "ERROR: Unable to get the target of symbolic link: " << source << endl;
+		return false;
+	}
+	return create_symlink(dest, target);
 }
 
 
@@ -199,7 +276,7 @@ bool copy_recursive(const wxString& source, const wxString& dest)
 		wxDir dest_dir(dest);
 		if (!wxDir::Exists(dest))
 		{
-			wxDir::Make(dest, 511, wxPATH_MKDIR_FULL);
+			create_dir_recursively(dest);
 		}
 		dest_dir.Open(dest);
 		assert(dest_dir.IsOpened());
@@ -225,10 +302,10 @@ bool copy_recursive(const wxString& source, const wxString& dest)
 	break;
 
 	case nt_symlink_file:
-		return copy_symlink(source, dest, source_type);
+		return copy_symlink(source, dest);
 
 	case nt_symlink_directory:
-		return copy_symlink(source, dest, source_type);
+		return copy_symlink(source, dest);
 
 	default:
 		con << "ERROR: " << source << " is of type: " << name(source_type) + "Unable to copy." << endl;
@@ -243,14 +320,13 @@ void test_copy_one_dir_to_another()
 	auto source_type = get_node_type(source);
 	assert(source_type == nt_normal_directory);
 
-
-
 	// get destination directory
 	wxString dest = Settings.test_data_dir.GetFullPath();
+
 	// delete it if it exists
 	auto dest_node_type = get_node_type(dest);
 	if (dest_node_type != nt_not_exist)
-		assert(wxDir::Remove(dest, wxPATH_RMDIR_RECURSIVE));
+		assert(delete_dir_recursively(dest));
 
 	// create destination directory
 	wxFileName dest_filename(dest);
@@ -264,17 +340,130 @@ void test_copy_one_dir_to_another()
 		con << "Copy completed successfully" << endl;
 	else
 		con << "Error during copy" << endl;
+}
 
-	//wxFileName source_filename(source);
-	//assert(source_filename.DirExists());
-	//assert(source_filename.IsDir());
+// extracts the last element from a path and returns it
+// i.e. "C:\dev\test_data\" returns "test_data"
+wxString get_name(const wxString& path)
+{
+	bool ends_with_separator = wxFileName::IsPathSeparator(path.Last());
+	int separator_pos = -1;
+	int elements_iterated = 0;
+	auto iter = path.end();
+	iter--; // because path.end() returns an iterator that points *past* the string...
+	if (ends_with_separator)
+		iter--; // to skip the first separator
 
-	//wxFileName dest_filename(dest);
-	//dest_filename.AppendDir(source_filename.GetDirs()[source_filename.GetDirCount() - 1]);
-	//con << dest_filename.GetFullPath() << endl;
+	while (iter > path.begin())
+	{
+		if (wxFileName::IsPathSeparator(*iter))
+		{
+			// not actually sure why the -1 works @todo: investigate
+			separator_pos = path.length() - elements_iterated - 1; 
+			break;
+		}
+		elements_iterated++;
+		iter--;
+	}
 
+	if (separator_pos == -1)
+	{
+		con << "ERROR: Couldn't find a suitable separator for: " << path << endl;
+		return wxEmptyString;
+	}
 
+	wxString name;
 
+	if (ends_with_separator)
+	{
+		name = path.substr(separator_pos, path.length() - (separator_pos + 1));
+	}
+	else
+	{
+		name = path.substr(separator_pos + 1, path.length() - separator_pos);
+	}
+	con << "Name for '" << path << "': '" << name << "'" << endl;
+	return name;
+}
+
+bool relocate(const wxString& source)
+{
+	wxString source_dir_name = get_name(source);
+
+	wxString backup_dir = Settings.backup_dir.GetFullPath();
+	if (!wxFileName::Exists(backup_dir))
+	{
+		assert(create_dir_recursively(backup_dir));
+	}
+	wxString target = backup_dir;
+
+	if (!wxFileName::IsPathSeparator(target.Last()))
+		target.append(wxFileName::GetPathSeparator());
+	target.append(source_dir_name);
+	con << "Source: " << source << endl;
+	con << "Target: " << target << endl;
+
+	// make sure that we're not trying to backup anything up into the backup dir directly
+	// we don't want to delete the backup_dir!!!
+	assert(!Settings.backup_dir.SameAs(wxFileName(target)));
+
+	// empty dst if it exists
+	{
+		Node_Type dst_dir_type = get_node_type(target);
+		if (dst_dir_type != nt_not_exist)
+		{
+			assert(delete_dir_recursively(target));
+		}
+		assert(create_dir_recursively(target));
+	}
+
+	// src (c:\dev\test_data) has the data, and dst (d:\bak\test_data) is empty
+	// copy src to dst
+	assert(copy_recursive(source, target));
+
+	// src (c:\dev\test_data) and dst (d:\bak\test_data) now have full copies of the data
+	// delete src's copy
+	assert(delete_dir_recursively(source));
+
+	// src (c:\dev\test_data) is empty and dst (d:\bak\test_data) now has the data
+	// create a symlink in src that points to dst
+	assert(create_symlink(source, target));
+
+	// src (c:\dev\test_data) contains a symlink to dst (d:\bak\test_data) which has the data
+	// and we're done!
+	return true;
+}
+
+bool restore(const wxString& source)
+{
+	Node_Type source_type = get_node_type(source);
+	assert(source_type == nt_symlink_directory); //assert(source_type == nt_symlink_directory || source_type == nt_symlink_file);
+	
+	wxString target;
+	assert(get_target_of_symlink(source, target));
+
+	// source (c:\dev\test_data -> d:\bak\test_data)
+	// delete symlink
+	assert(delete_target(source));
+
+	// copy data from target back to source
+	assert(copy_recursive(target, source));
+
+	// delete target's copy
+	assert(delete_target(target));
+
+	// and we're done
+	return true;
+}
+
+void test_relocate_dir()
+{
+	assert(relocate(Settings.test_data_dir.GetFullPath()));
+}
+
+void test_restore_dir()
+{
+	assert(restore(Settings.test_data_dir.GetFullPath()));
 }
 
 

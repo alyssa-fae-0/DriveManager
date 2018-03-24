@@ -1,9 +1,5 @@
 #pragma once
-
-#pragma warning (push)
-#pragma warning (disable : 4996)
-#include <wx\filename.h>
-#pragma warning (pop)
+#include "fae_lib.h"
 
 struct App_Settings
 {
