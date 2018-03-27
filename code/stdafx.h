@@ -1,5 +1,8 @@
 #pragma once
 
+#pragma warning(push)
+#pragma warning(disable : 4996)
+
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
@@ -15,8 +18,7 @@
 #include <string>
 #include <vector>
 
-#pragma warning (push)
-#pragma warning (disable : 4996)
+
 #include <wx\wx.h>
 #include <wx\filepicker.h>
 #include <wx\listctrl.h>
@@ -27,7 +29,6 @@
 #include <wx\filename.h>
 #include <wx\notifmsg.h>
 #include <wx\dir.h>
-#pragma warning (pop)
 
 using std::string;
 using std::wstring;
@@ -37,3 +38,4 @@ using std::cin;
 using std::cout;
 using std::cerr;
 using std::endl;
+#pragma warning (pop)

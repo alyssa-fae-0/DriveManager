@@ -5,9 +5,9 @@
 #include "settings.h"
 #include "fae_filesystem.h"
 
-wxULongLong get_size(const wxString& path, Node_Type type = nt_not_exist)
+wxULongLong get_size(const wxString& path, Node_Type type = Node_Type::not_exist)
 {
-	if (type == nt_not_exist)
+	if (type == Node_Type::not_exist)
 		type = get_node_type(path);
 
 	if (!exists(type))
@@ -18,16 +18,16 @@ wxULongLong get_size(const wxString& path, Node_Type type = nt_not_exist)
 
 	switch (type)
 	{
-	case nt_symlink_file:
+	case Node_Type::symlink_file:
 		return 0;
 
-	case nt_normal_file:
+	case Node_Type::normal_file:
 		return wxFileName::GetSize(path);
 
-	case nt_symlink_directory:
+	case Node_Type::symlink_directory:
 		return 0;
 
-	case nt_normal_directory:
+	case Node_Type::normal_directory:
 {
 		wxULongLong node_size = 0;
 		wxDir dir(path);
@@ -43,7 +43,7 @@ wxULongLong get_size(const wxString& path, Node_Type type = nt_not_exist)
 		{
 			wxString& file = files[i];
 			Node_Type file_type = get_node_type(file);
-			if (file_type != nt_normal_file)
+			if (file_type != Node_Type::normal_file)
 				continue;
 			auto sub_size = wxFileName::GetSize(file);
 			node_size += sub_size;
@@ -74,16 +74,16 @@ bool delete_target(const wxString& target)
 	bool success = false;
 	switch (type)
 	{
-	case nt_normal_file:
-	case nt_symlink_file:
+	case Node_Type::normal_file:
+	case Node_Type::symlink_file:
 		success = DeleteFile(target.wchar_str());
 		break;
 
-	case nt_normal_directory:
+	case Node_Type::normal_directory:
 		success = delete_dir_recursively(target);
 		break;
 
-	case nt_symlink_directory:
+	case Node_Type::symlink_directory:
 		success = RemoveDirectory(target.wchar_str());
 		break;
 
@@ -122,7 +122,7 @@ void list_items_in_dir(wxString& dir_string, int depth, std::vector<File_Record>
 			for (int i = 0; i < depth; i++)
 				con << "     ";
 			con << filename << ": " << name(file_type) << endl;
-			if (file_type == nt_normal_directory)
+			if (file_type == Node_Type::normal_directory)
 			{
 				list_items_in_dir(fullname, depth+1, records);
 			}
@@ -183,7 +183,7 @@ bool copy_normal_file(const wxString& source, const wxString& dest) {
 bool get_target_of_symlink(const wxString& link_path, wxString& target_out)
 {
 	Node_Type type = get_node_type(link_path);
-	int open_flag = (type == nt_symlink_directory) ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL;																					 // file is 
+	int open_flag = (type == Node_Type::symlink_directory) ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL;																					 // file is 
 
 	HANDLE linked_handle = INVALID_HANDLE_VALUE;
 	wxWritableWCharBuffer link_path_w = link_path.wchar_str();
@@ -239,7 +239,7 @@ bool get_target_of_symlink(const wxString& link_path, wxString& target_out)
 bool create_symlink(const wxString& link_source, const wxString& target)
 {
 	Node_Type type = get_node_type(target);
-	auto result = CreateSymbolicLink(link_source.wchar_str(), target.wchar_str(), (type == nt_symlink_directory || type == nt_normal_directory) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0);
+	auto result = CreateSymbolicLink(link_source.wchar_str(), target.wchar_str(), (type == Node_Type::symlink_directory || type == Node_Type::normal_directory) ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0);
 	if (!result)
 	{
 		con << "ERROR: Unable to create symbolic link: " << link_source << " -> " << target << endl;
@@ -265,10 +265,10 @@ bool copy_recursive(const wxString& source, const wxString& dest)
 	Node_Type source_type = get_node_type(source);
 	switch (source_type)
 	{
-	case nt_normal_file:
+	case Node_Type::normal_file:
 		return copy_normal_file(source, dest);
 
-	case nt_normal_directory:
+	case Node_Type::normal_directory:
 	{
 		wxDir source_dir(source);
 		assert(source_dir.IsOpened());
@@ -301,10 +301,10 @@ bool copy_recursive(const wxString& source, const wxString& dest)
 	}
 	break;
 
-	case nt_symlink_file:
+	case Node_Type::symlink_file:
 		return copy_symlink(source, dest);
 
-	case nt_symlink_directory:
+	case Node_Type::symlink_directory:
 		return copy_symlink(source, dest);
 
 	default:
@@ -318,14 +318,14 @@ void test_copy_one_dir_to_another()
 	// get source directory
 	wxString source = Settings.test_data_source.GetFullPath();
 	auto source_type = get_node_type(source);
-	assert(source_type == nt_normal_directory);
+	assert(source_type == Node_Type::normal_directory);
 
 	// get destination directory
 	wxString dest = Settings.test_data_dir.GetFullPath();
 
 	// delete it if it exists
 	auto dest_node_type = get_node_type(dest);
-	if (dest_node_type != nt_not_exist)
+	if (dest_node_type != Node_Type::not_exist)
 		assert(delete_dir_recursively(dest));
 
 	// create destination directory
@@ -346,6 +346,7 @@ void test_copy_one_dir_to_another()
 // i.e. "C:\dev\test_data\" returns "test_data"
 wxString get_name(const wxString& path)
 {
+	assert(!path.IsEmpty());
 	bool ends_with_separator = wxFileName::IsPathSeparator(path.Last());
 	int separator_pos = -1;
 	int elements_iterated = 0;
@@ -366,24 +367,24 @@ wxString get_name(const wxString& path)
 		iter--;
 	}
 
+	// if we didn't find a separator
 	if (separator_pos == -1)
 	{
-		con << "ERROR: Couldn't find a suitable separator for: " << path << endl;
-		return wxEmptyString;
+		return path; // return the entire thing
 	}
 
-	wxString name;
+	//wxString name;
 
 	if (ends_with_separator)
 	{
-		name = path.substr(separator_pos, path.length() - (separator_pos + 1));
+		return path.substr(separator_pos, path.length() - (separator_pos + 1));
 	}
 	else
 	{
-		name = path.substr(separator_pos + 1, path.length() - separator_pos);
+		return path.substr(separator_pos + 1, path.length() - separator_pos);
 	}
-	con << "Name for '" << path << "': '" << name << "'" << endl;
-	return name;
+	//con << "Name for '" << path << "': '" << name << "'" << endl;
+	//return name;
 }
 
 bool relocate(const wxString& source)
@@ -410,7 +411,7 @@ bool relocate(const wxString& source)
 	// empty dst if it exists
 	{
 		Node_Type dst_dir_type = get_node_type(target);
-		if (dst_dir_type != nt_not_exist)
+		if (dst_dir_type != Node_Type::not_exist)
 		{
 			assert(delete_dir_recursively(target));
 		}
@@ -437,7 +438,7 @@ bool relocate(const wxString& source)
 bool restore(const wxString& source)
 {
 	Node_Type source_type = get_node_type(source);
-	assert(source_type == nt_symlink_directory); //assert(source_type == nt_symlink_directory || source_type == nt_symlink_file);
+	assert(source_type == Node_Type::symlink_directory); //assert(source_type == Node_Type::nt_symlink_directory || source_type == Node_Type::nt_symlink_file);
 	
 	wxString target;
 	assert(get_target_of_symlink(source, target));
