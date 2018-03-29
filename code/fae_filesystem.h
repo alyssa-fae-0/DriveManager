@@ -138,10 +138,10 @@ bool push_dir(wxFileName& path, string dir)
 	return result;
 }
 
-void push_file(wxFileName& path, string name)
+void push_file(wxFileName& path, string node_type_name)
 {
-	assert(!name.empty());
-	path.SetFullName(name);
+	assert(!node_type_name.empty());
+	path.SetFullName(node_type_name);
 	assert(path.IsOk());
 }
 
@@ -150,9 +150,9 @@ string pop(wxFileName& path)
 	// remove the file name if it exists
 	if (path.HasName())
 	{
-		string name = to_string(path.GetFullName());
+		string node_type_name = to_string(path.GetFullName());
 		path.SetFullName(wxString());
-		return name;
+		return node_type_name;
 	}
 
 	// otherwise this is a directory; remove last dir
@@ -176,7 +176,7 @@ enum struct Node_Type : int
 	num_types
 };
 
-string name(Node_Type type)
+string node_type_name(Node_Type type)
 {
 	switch (type)
 	{
@@ -222,7 +222,11 @@ Node_Type get_node_type(WIN32_FIND_DATA &data)
 
 Node_Type get_node_type(const wxString& path)
 {
-	wxString path_name = path;
+	wxString path_name; 
+	if (path.length() > MAX_PATH)
+		path_name.append(L"\\\\?\\");
+
+	path_name.append(path);
 	if (wxFileName::IsPathSeparator(path_name.at(path_name.length() - 1)))
 		path_name.RemoveLast();
 

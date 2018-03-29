@@ -121,7 +121,7 @@ void list_items_in_dir(wxString& dir_string, int depth, std::vector<File_Record>
 			records.push_back({filename, file_type});
 			for (int i = 0; i < depth; i++)
 				con << "     ";
-			con << filename << ": " << name(file_type) << endl;
+			con << filename << ": " << node_type_name(file_type) << endl;
 			if (file_type == Node_Type::normal_directory)
 			{
 				list_items_in_dir(fullname, depth+1, records);
@@ -149,7 +149,7 @@ void test_list_items_in_dir()
 	for (size_t i = 0; i < records.size(); i++)
 	{
 		File_Record& record = records[i];
-		con << "Record " << i << ": {" << name(record.filetype) << ", " << record.filename << "}" << endl;
+		con << "Record " << i << ": {" << node_type_name(record.filetype) << ", " << record.filename << "}" << endl;
 	}
 }
 
@@ -308,7 +308,7 @@ bool copy_recursive(const wxString& source, const wxString& dest)
 		return copy_symlink(source, dest);
 
 	default:
-		con << "ERROR: " << source << " is of type: " << name(source_type) + "Unable to copy." << endl;
+		con << "ERROR: " << source << " is of type: " << node_type_name(source_type) + "Unable to copy." << endl;
 		return false;
 	}
 }

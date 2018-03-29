@@ -5,6 +5,7 @@
 #include "console.h"
 #include "new_filesystem.h"
 #include "dir_data_view.h"
+#include "app_events.h"
 
 /*
 
@@ -36,6 +37,8 @@
 
 */
 
+//wxDEFINE_EVENT(APP_EVENT_TYPE, wxCommandEvent);
+
 App_Settings Settings;
 
 //struct Test_Result
@@ -49,6 +52,9 @@ App_Settings Settings;
 //#define Test(name) void name() 
 //#define Require(expression) tests.push_back({#expression, expression});
 //#define test_are_equal(a,b) 
+
+// As before, define a new wxEventType
+wxDEFINE_EVENT(App_Event_Type, App_Event);
 
 
 void run_tests()
@@ -90,6 +96,7 @@ enum struct id : int
 	test_button,
 	console_id,
 	scroll_button,
+	thread_count_timer_id,
 	num_ids
 };
 
@@ -111,7 +118,10 @@ void init_IDs()
 
 wxTextCtrl* text_console = null;
 ostream* Console = null;
+wxCriticalSection con_cs;
 wxObjectDataPtr<fs_model> Model;
+vector<fs_node*> nodes_to_calc_size;
+wxCriticalSection nodes_to_calc_size_cs;
 
 
 class MyFrame : public wxFrame
@@ -130,6 +140,7 @@ public:
 		init_IDs();
 		//set_IDs();
 		text_console = new wxTextCtrl(this, get_id(id::console_id), "Console Log:\n", wxDefaultPosition, wxDefaultSize, wxTE_MULTILINE | wxTE_READONLY | wxTE_BESTWRAP);
+		text_console->SetMaxSize(wxSize(-1, 150));
 		Console = new std::ostream(text_console);
 
 		run_tests();
@@ -188,7 +199,7 @@ public:
 
 			// Navigation View
 			ctrl = new wxDataViewCtrl(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxDV_ROW_LINES);
-			model = new fs_model("C:\\dev");
+			model = new fs_model(this, "C:\\dev");
 			//model = new fs_model(Settings.test_data_source.GetFullPath());
 			Model = model;
 			ctrl->AssociateModel(model.get());
@@ -221,6 +232,14 @@ public:
 		}
 
 		Bind(wxEVT_DATAVIEW_ITEM_EXPANDING, &MyFrame::on_data_view_item_expanding, this);
+		Bind(wxEVT_DATAVIEW_ITEM_ACTIVATED, &MyFrame::on_model_item_double_clicked, this);
+
+		Bind(App_Event_Type, &MyFrame::on_nodes_added_to_model, this, (int)App_Event_IDs::nodes_added);
+		Bind(App_Event_Type, &MyFrame::on_node_size_calc_failed, this, (int)App_Event_IDs::thread_node_size_calc_failed);
+		Bind(App_Event_Type, &MyFrame::on_node_size_calc_finished, this, (int)App_Event_IDs::thread_node_size_calc_finished);
+
+		timer = new wxTimer(this, get_id(id::thread_count_timer_id));
+		Bind(wxEVT_TIMER, &MyFrame::on_thread_count_timer, this);
 
 		//Bind(wxEVT_MENU, &MyFrame::OnDirPicker, this, ID.open_dir_picker);
 		//Bind(wxEVT_DIRPICKER_CHANGED, &MyFrame::OnDirPickerChanged, this, ID.relocate_dir_picker);
@@ -241,11 +260,75 @@ public:
 		con << endl;
 
 		SetSizerAndFit(window_sizer);
+		timer->Start(time_between_thread_counts); // milliseconds
+		
+		//Bind(wxEVT_SIZE, &MyFrame::on_window_resized, this);
+
 	}
 
+	wxTimer* timer;
 	wxPanel* panel;
 	wxDataViewCtrl* ctrl;
 	wxObjectDataPtr<fs_model> model;
+	const int time_between_thread_counts = 500; // miliseconds
+
+	void on_window_resized(wxSizeEvent& event)
+	{
+		auto size = event.GetSize();
+		con << "Resize: {" << size.GetWidth() << ", " << size.GetHeight() << "}" << endl;
+		event.Skip();
+	}
+
+	void on_thread_count_timer(wxTimerEvent& event)
+	{
+		this->SetStatusText(wxString("Active Threads: ") << model->get_num_active_threads());
+	}
+
+	void on_node_size_calc_finished(App_Event& event)
+	{
+		assert(event.GetId() == (int)App_Event_IDs::thread_node_size_calc_finished);
+		fs_node* node = event.node;
+		//con << "Recalculated size for: " << node->get_path() << endl;
+		//{
+			//wxCriticalSectionLocker enter(node->size_cs);
+			//con << "  New size: " << wxFileName::GetHumanReadableSize(node->size.val) << endl;
+		//}
+		model->ValueChanged(wxDataViewItem(node), 2);
+		wxQueueEvent(this, new App_Event(App_Event_IDs::nodes_added));
+	}
+
+	void on_node_size_calc_failed(App_Event& event)
+	{
+		assert(event.GetId() == (int)App_Event_IDs::thread_node_size_calc_failed);
+		fs_node* node = event.node;
+		con << "Failed to calculate size for: " << node->get_path() << endl;
+		wxQueueEvent(this, new App_Event(App_Event_IDs::nodes_added));
+	}
+
+	void on_nodes_added_to_model(App_Event& event)
+	{
+		assert(event.GetId() == (int)App_Event_IDs::nodes_added);
+
+		{
+			wxCriticalSectionLocker enter(nodes_to_calc_size_cs);
+			for(int i = nodes_to_calc_size.size() - 1; i >= 0; i--)
+			{
+				fs_node* node = nodes_to_calc_size.at(i);
+				if (model->spawn_thread(node))
+					nodes_to_calc_size.pop_back();
+				else
+					break;
+			}
+		}
+	}
+
+	void on_model_item_double_clicked(wxDataViewEvent& event)
+	{
+		auto item = event.GetItem();
+		assert(item.IsOk());
+		fs_node* node = (fs_node*)item.GetID();
+		con << node->to_string() << endl;
+	}
 
 	void on_test_button(wxCommandEvent& event)
 	{
@@ -265,8 +348,19 @@ public:
 		if (node->type != Node_Type::normal_directory)
 			return;
 
-		con << "on_data_view_item_expanding() path: " << node->get_path() << endl;
+		wxString path = node->get_path();
+		//con << "on_data_view_item_expanding() path: " << path << endl;
 		node->update_children();
+		//{
+			//wxCriticalSectionLocker enter(node->children_cs);
+			//con << path << " has " << node->children.size() << " children" << endl;
+		//}
+
+		App_Event* app_event = new App_Event(App_Event_IDs::nodes_added);
+		//app_event->SetEventObject(this);
+		wxQueueEvent(this, app_event);
+
+		//wxQueueEvent(this, new wxCommandEvent(APP_EVENT_TYPE, (int)App_Event_IDs::nodes_added));
 	}
 
 	void OnDirPicker(wxCommandEvent& event)

@@ -1,9 +1,66 @@
 #pragma once
 #include "fae_lib.h"
 #include "new_filesystem.h"
+#include "app_events.h"
 
 class fs_model;
 extern wxObjectDataPtr<fs_model> Model;
+
+class fs_node;
+extern vector<fs_node*> nodes_to_calc_size;
+extern wxCriticalSection nodes_to_calc_size_cs;
+
+//struct nullable_size
+//{
+//	nullable_size()
+//	{
+//		is_null = true;
+//		size = 0;
+//	}
+//
+//	nullable_size(bool is_null, wxULongLong size)
+//		: is_null(is_null), size(size) 
+//	{ }
+//
+//	operator wxULongLong() 
+//	{
+//		return size;
+//	}
+//
+//	bool is_null;
+//	wxULongLong size;
+//};
+
+enum struct node_size_state : int
+{
+	waiting_processing,
+	processing,
+	unable_to_access_all_files,
+	processing_complete
+};
+
+wxString size_state_name(node_size_state state)
+{
+	switch (state)
+	{
+	case node_size_state::waiting_processing:
+		return "'Waiting for Processing'";
+	case node_size_state::processing:
+		return "'Processing'";
+	case node_size_state::unable_to_access_all_files:
+		return "'Unable to Process All Files'";
+	case node_size_state::processing_complete:
+		return "'Processing Complete'";
+	}
+	assert(false); // shouldn't get here
+	return "ERROR: INVALID STATE";
+}
+
+struct node_size
+{
+	node_size_state state;
+	wxULongLong val;
+};
 
 class fs_node
 {
@@ -12,7 +69,9 @@ public:
 	//u32 uid;
 	wxString name;
 	Node_Type type;
-	wxULongLong size;
+
+	node_size size;
+	wxCriticalSection size_cs;
 
 	fs_node* parent;
 	vector<fs_node*> children;
@@ -23,14 +82,36 @@ public:
 
 	fs_node(fs_node* parent, const wxString& path)
 	{
+		//con << "Creating node: " << path << endl;
 		//this->uid = uid;
 		this->parent = parent;
 		this->name = get_name(path);
 
 		this->type = get_node_type(path);
 		// if (type == Node_Type::nt_normal_directory) con << "calculating size for " << path << endl;
-		if(this->type != Node_Type::normal_directory)
-			this->size = get_size(path);
+		
+		
+		if (this->type != Node_Type::normal_directory)
+		{
+			auto val = get_size(path);
+			wxCriticalSectionLocker enter(size_cs);
+			this->size.val = val;
+			this->size.state = node_size_state::processing_complete;
+		}
+		else
+		{
+			{
+				auto val = wxInvalidSize;
+				wxCriticalSectionLocker(this->size_cs);
+				size.val = val;
+				size.state = node_size_state::waiting_processing;
+			}
+			{
+				wxCriticalSectionLocker enter(nodes_to_calc_size_cs);
+				nodes_to_calc_size.push_back(this);
+			}
+		}
+		
 		//if (type == Node_Type::nt_normal_directory) con << "size calculated" << endl;
 	}
 
@@ -40,6 +121,40 @@ public:
 		{
 			delete child;
 		}
+	}
+
+	wxString to_string()
+	{
+		wxString str;
+		str << "Path: " << this->get_path();
+		str << ",\n  Name: " << this->name;
+		str << ",\n  Type: " << node_type_name(this->type);
+		str << ",\n  Size State: ";
+		{
+			wxCriticalSectionLocker enter(this->size_cs);
+			str << size_state_name(this->size.state);
+			str << ",\n  Size: " << wxFileName::GetHumanReadableSize(this->size.val);
+		}
+		str << ",\n  Parent Name: ";
+		if (this->parent == null)
+			str << "NULL";
+		else
+			str << this->parent->name;
+		str << ",\n  Children names: ";
+		{
+			wxCriticalSectionLocker enter(this->children_cs);
+			if (this->children.size() == 0)
+				str << "NULL";
+			else
+			{
+				// actually has children
+				for (auto child : children)
+				{
+					str << "\n    " << child->name;
+				}
+			}
+		}
+		return str;
 	}
 
 	bool is_root()
@@ -65,13 +180,22 @@ public:
 			parent->build_path(path);
 		}
 		path.append(name);
-		con << "Built path: " << path << endl;
+		//con << "Built path: " << path << endl;
 		return path;
 	}
 
 	// @todo: should this be folded into the thread traversing?
+	// @todo @robustness: add better checks to only update children when we actually need to
+	// @hack
 	void update_children()
 	{
+		{
+			wxCriticalSectionLocker enter(children_cs);
+			if (children.size() != 0)
+			{
+				return;
+			}
+		}
 		const wxString path = get_path();
 		wxDir dir(path);
 		assert(dir.IsOpened());
@@ -98,11 +222,11 @@ public:
 			wxCriticalSectionLocker enter(this->children_cs);
 			for (auto file : files)
 			{
-				children.push_back(new fs_node(this, file));
+				fs_node* node = new fs_node(this, file);
+				//nodes_to_calc_size.push_back(node);
+				children.push_back(node);
 			}
 		}
-		
-
 	}
 };
 
@@ -114,36 +238,149 @@ public:
 	fs_node* node;
 	vector<fs_thread*>* threads;
 	wxCriticalSection* threads_cs;
+	wxWindow* window;
 
-	fs_thread(fs_node* node, vector<fs_thread*>* threads, wxCriticalSection* threads_cs)
+	fs_thread(wxWindow* window, fs_node* node, vector<fs_thread*>* threads, wxCriticalSection* threads_cs)
 		: wxThread(wxTHREAD_DETACHED)
 	{
 		this->node = node;
 		this->threads = threads;
 		this->threads_cs = threads_cs;
+		this->window = window;
 	}
 
 	~fs_thread()
 	{
 		wxCriticalSectionLocker enter(*threads_cs);
-
-		// @bug? We may be missing the final element, depending on how .end() works
-		for (auto iter = threads->begin(); iter < threads->end(); iter++)
+		for (size_t i = 0; i < threads->size(); i++)
 		{
-			if (*iter == this)
-			{
-				*iter = null;
-			}
+			if (threads->at(i) == this)
+				threads->at(i) = null;
+
 		}
+		//thread = null;
+	}
+
+	wxULongLong get_size(const wxString& path)
+	{
+		Node_Type type = get_node_type(path);
+		if (!exists(type))
+		{
+			//con << "Error getting size for: " << path << endl;
+			return wxInvalidSize;
+		}
+
+		switch (type)
+		{
+		case Node_Type::symlink_file:
+			return 0;
+
+		case Node_Type::normal_file:
+			return wxFileName::GetSize(path);
+
+		case Node_Type::symlink_directory:
+			return 0;
+
+		case Node_Type::normal_directory:
+		{
+			wxULongLong node_size = 0;
+			wxDir dir(path);
+			if (!dir.IsOpened())
+			{
+				//cerr << "Failed to open dir" << endl;
+				return wxInvalidSize;
+			}
+			if (TestDestroy()) 
+				return wxInvalidSize;
+			const wxString basepath = dir.GetNameWithSep();
+			wxString filename;
+			
+			bool has_file = dir.GetFirst(&filename, wxEmptyString, wxDIR_FILES | wxDIR_DIRS | wxDIR_HIDDEN | wxDIR_NO_FOLLOW);
+			while (has_file)
+			{
+				if (TestDestroy()) 
+					return wxInvalidSize;
+				auto sub_size = get_size(basepath + filename);
+				if (sub_size == wxInvalidSize)
+					return sub_size;
+				node_size += sub_size;
+				has_file = dir.GetNext(&filename);
+			}
+			return node_size;
+			
+
+
+			//wxArrayString files;
+
+			//size_t num_files = dir.GetAllFiles(path, &files, wxEmptyString, wxDIR_FILES | wxDIR_DIRS | wxDIR_HIDDEN | wxDIR_NO_FOLLOW);
+			//for (size_t i = 0; i < num_files; i++)
+			//{
+			//	wxString& file = files[i];
+			//	Node_Type file_type = get_node_type(file);
+			//	if (file_type != Node_Type::normal_file)
+			//		continue;
+			//	auto sub_size = wxFileName::GetSize(file);
+			//	node_size += sub_size;
+			//}
+			//return node_size;
+		}
+		}
+		//con << "ERROR: This should be unreachable." << endl;
+		return wxInvalidSize;
 	}
 
 	wxThread::ExitCode Entry() override
 	{
-		while (!TestDestroy())
+		if (TestDestroy()) 
+			return (wxThread::ExitCode)-1;
+		
+		wxString node_path = node->get_path();
+		if (TestDestroy()) 
+			return (wxThread::ExitCode)-1;
+		
+		auto size = get_size(node_path);
+		if (TestDestroy()) 
+			return (wxThread::ExitCode)-1;
+
+		if (size == wxInvalidSize)
 		{
-			//node->size = get_size(node->path);
-			//wxQueueEvent(window, new wxDataViewEvent(wxevt_dataview, null, wxDataViewItem(node)));
+			// getting the size failed
+			App_Event* event = new App_Event(App_Event_IDs::thread_node_size_calc_failed);
+			event->node = node;
+			wxQueueEvent(window, event);
+
+
+			//wxCommandEvent thread_event(APP_EVENT_TYPE, (int)App_Event_IDs::thread_node_size_calc_failed);
+			//thread_event.SetClientData(node);
+			//wxQueueEvent(window, &thread_event);
+			return (wxThread::ExitCode) -1;
 		}
+
+		{
+			// set the new size
+			wxCriticalSectionLocker enter(node->size_cs);
+			node->size.val = size;
+			node->size.state = node_size_state::processing_complete;
+		}
+		if (TestDestroy()) 
+			return (wxThread::ExitCode)-1;
+
+
+		App_Event* event = new App_Event(App_Event_IDs::thread_node_size_calc_finished);
+		event->node = node;
+		wxQueueEvent(window, event);
+
+		//wxCommandEvent thread_event(APP_EVENT_TYPE, (int)App_Event_IDs::thread_node_size_calc_finished);
+		//thread_event.SetClientData(node);
+		//wxQueueEvent(window, &thread_event);
+		
+		//event_a.SetString("data one"); wxPostEvent(this, event_a);
+
+		//auto thread_event = new wxThreadEvent(get_id(id::thread_node_size_calc_finished));
+		//thread_event->SetPayload<fs_node*>(node);
+		//if (TestDestroy()) return (wxThread::ExitCode)-1;
+
+		//wxQueueEvent(window, thread_event);
 
 		// signal the event handler that this thread is going to be destroyed
 		// NOTE: here we assume that using the m_pHandler pointer is safe,
@@ -152,8 +389,6 @@ public:
 
 		return (wxThread::ExitCode)0;     // success
 	}
-
-
 };
 
 
@@ -176,9 +411,9 @@ public:
 	// where we have e.g. two threads trying to reclaim an empty slot at the same time?)
 	vector<fs_thread*> threads;
 	wxCriticalSection threads_cs;
-	const int max_threads = 8; // @todo: come up with a programatic way to derive this number
+	int max_threads;
 
-	wxWindow* parent_window;
+	wxWindow* window;
 
 	u32 get_new_uid() 
 	{
@@ -191,14 +426,69 @@ public:
 		return get_id;
 	}
 
-	void spawn_thread(fs_node* node)
+	int get_num_active_threads()
+	{
+		wxCriticalSectionLocker enter(threads_cs);
+		int active_threads = 0;
+		for (auto thread : threads)
+		{
+			if (thread != null)
+				active_threads++;
+		}
+		return active_threads;
+	}
+
+	bool spawn_thread(fs_node* node)
 	{
 		fs_thread* thread = null;
 		{
 			wxCriticalSectionLocker enter(threads_cs);
-			thread = new fs_thread(node, &threads, &threads_cs);
-			threads.push_back(thread);
+			// get the number of threads
+			int active_threads = 0;
+
+			int first_free_thread_index = -1;
+			for (size_t i = 0; i < threads.size(); i++)
+			{
+				if (threads[i] != null)
+				{
+					active_threads++;
+					continue;
+				}
+				// if we reached this point, the thread slot is null (empty)
+				if (first_free_thread_index == -1)
+				{
+					first_free_thread_index = i;
+				}
+			}
+
+			// no room for the thread, even if we have a slot for it
+			if (active_threads >= max_threads)
+				return false;
+
+			thread = new fs_thread(window, node, &threads, &threads_cs);
+
+			if (first_free_thread_index >= 0)
+			{
+				// thread already has a slot
+				threads[first_free_thread_index] = thread;
+			}
+			else
+			{
+				// no slot for the new thread; push one back
+				threads.push_back(thread);
+			}
 		}
+
+		// update the node size state here, now that we know that 
+		//   we know that we have a thread to process it;
+		//   and before we run the thread, so that we won't have to
+		//   possibly race with the thread to set the state
+		{
+			wxCriticalSectionLocker enter(node->size_cs);
+			node->size.state = node_size_state::processing;
+		}
+		ValueChanged(wxDataViewItem(node), 2);
+
 		if (thread->Run() != wxTHREAD_NO_ERROR)
 		{
 			con << "ERROR: Failed to create thread" << endl;
@@ -212,7 +502,14 @@ public:
 					*iter = null;
 				}
 			}
+
+			// @todo: should we return false here because adding the thread failed?
+			//		  or should we return true so that the caller doesn't keep
+			//		  readding the same thread that will fail repeatedly?
+			return false;
+
 		}
+		return true;
 	}
 
 	void kill_threads()
@@ -251,8 +548,11 @@ public:
 
 
 
-	fs_model(wxString starting_path)
+	fs_model(wxWindow* window, wxString starting_path)
 	{
+		this->window = window;
+		this->max_threads = wxThread::GetCPUCount();
+
 		// get all drives
 		vector<wxString> drives;
 
@@ -336,11 +636,60 @@ public:
 		}
 		else if (col == 1)
 		{
-			variant = name(node->type);
+			variant = node_type_name(node->type);
 		}
 		else if (col == 2)
 		{
-			variant = wxFileName::GetHumanReadableSize(node->size);
+			//switch (node->type)
+			//{
+
+			//case Node_Type::normal_directory:
+			{
+				wxCriticalSectionLocker enter(node->size_cs);
+				switch (node->size.state)
+				{
+				case node_size_state::processing:
+				{
+					variant = wxString("Processing.");
+				} break;
+
+				case node_size_state::processing_complete:
+				{
+					if (node->size.val == 0)
+						variant = wxString("0 B");
+					else
+						variant = wxFileName::GetHumanReadableSize(node->size.val);
+				} break;
+
+				case node_size_state::unable_to_access_all_files:
+				{
+					if (node->size.val == 0)
+						variant = wxString("0 B*");
+					else
+						variant = wxFileName::GetHumanReadableSize(node->size.val) + wxString("*");
+				} break;
+
+				case node_size_state::waiting_processing:
+				{
+					variant = wxString("Waiting For Processing.");
+				} break;
+				}					
+			}
+			/*break;
+
+			case Node_Type::normal_file:
+			{
+				variant = wxFileName::GetHumanReadableSize(node->size);
+			}
+			break;
+
+			case Node_Type::symlink_directory:
+			case Node_Type::symlink_file:
+			{
+				variant = wxString("0 B");
+			}
+			break;
+			}*/
 		}
 		else
 		{
@@ -370,8 +719,9 @@ public:
 		}
 		else if (col == 2)
 		{
-			node->size = variant.GetULongLong();
-			return true;
+			// no, we're not gonna try to parse anything here; sorry
+			//node->size = variant.GetULongLong();
+			return false;
 		}
 		else
 		{

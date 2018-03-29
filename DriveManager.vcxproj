@@ -84,7 +84,7 @@
       <TreatWarningAsError>true</TreatWarningAsError>
       <AdditionalIncludeDirectories>C:\api\wx\include\msvc;C:\api\wx\include;C:\api\catch;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WXUSINGDLL;wxMSVC_VERSION_AUTO;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PrecompiledHeader>Create</PrecompiledHeader>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
       <MinimalRebuild>false</MinimalRebuild>
       <RemoveUnreferencedCodeData>false</RemoveUnreferencedCodeData>
@@ -118,7 +118,7 @@
       <TreatWarningAsError>true</TreatWarningAsError>
       <AdditionalIncludeDirectories>C:\api\wx\include\msvc;C:\api\wx\include;C:\api\catch;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WXUSINGDLL;wxMSVC_VERSION_AUTO;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PrecompiledHeader>Create</PrecompiledHeader>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
       <MultiProcessorCompilation>false</MultiProcessorCompilation>
       <DisableSpecificWarnings>
@@ -147,9 +147,9 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="code\main.cpp" />
-    <ClCompile Include="code\stdafx.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="code\app_events.h" />
     <ClInclude Include="code\console.h" />
     <ClInclude Include="code\dir_data_view.h" />
     <ClInclude Include="code\fae_filesystem.h" />
