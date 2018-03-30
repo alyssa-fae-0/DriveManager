@@ -152,7 +152,6 @@
     <ClInclude Include="code\app_events.h" />
     <ClInclude Include="code\console.h" />
     <ClInclude Include="code\dir_data_view.h" />
-    <ClInclude Include="code\fae_filesystem.h" />
     <ClInclude Include="code\fae_lib.h" />
     <ClInclude Include="code\fae_memory.h" />
     <ClInclude Include="code\fae_string.h" />

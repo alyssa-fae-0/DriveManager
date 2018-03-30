@@ -31,36 +31,16 @@ extern wxCriticalSection nodes_to_calc_size_cs;
 //	wxULongLong size;
 //};
 
-enum struct node_size_state : int
+namespace fs_column
 {
-	waiting_processing,
-	processing,
-	unable_to_access_all_files,
-	processing_complete
-};
-
-wxString size_state_name(node_size_state state)
-{
-	switch (state)
-	{
-	case node_size_state::waiting_processing:
-		return "'Waiting for Processing'";
-	case node_size_state::processing:
-		return "'Processing'";
-	case node_size_state::unable_to_access_all_files:
-		return "'Unable to Process All Files'";
-	case node_size_state::processing_complete:
-		return "'Processing Complete'";
-	}
-	assert(false); // shouldn't get here
-	return "ERROR: INVALID STATE";
+	enum {
+		name = 0,
+		type,
+		readable_size,
+		raw_size,
+		num_columns
+	};
 }
-
-struct node_size
-{
-	node_size_state state;
-	wxULongLong val;
-};
 
 class fs_node
 {
@@ -80,7 +60,7 @@ public:
 	//wxString path; // on the chopping block
 
 
-	fs_node(fs_node* parent, const wxString& path)
+	fs_node(fs_node* parent, const wxString& path) : size(node_size_state::waiting_processing, 0)
 	{
 		//con << "Creating node: " << path << endl;
 		//this->uid = uid;
@@ -115,46 +95,39 @@ public:
 		//if (type == Node_Type::nt_normal_directory) con << "size calculated" << endl;
 	}
 
+	void refresh()
+	{
+		auto path = get_path();
+		this->type = get_node_type(path);
+
+		if (this->type != Node_Type::normal_directory)
+		{
+			auto val = get_size(path);
+			wxCriticalSectionLocker enter(size_cs);
+			this->size.val = val;
+			this->size.state = node_size_state::processing_complete;
+		}
+		else
+		{
+			{
+				auto val = wxInvalidSize;
+				wxCriticalSectionLocker(this->size_cs);
+				size.val = val;
+				size.state = node_size_state::waiting_processing;
+			}
+			{
+				wxCriticalSectionLocker enter(nodes_to_calc_size_cs);
+				nodes_to_calc_size.push_back(this);
+			}
+		}
+	}
+
 	~fs_node()
 	{
 		for (auto child : children)
 		{
 			delete child;
 		}
-	}
-
-	wxString to_string()
-	{
-		wxString str;
-		str << "Path: " << this->get_path();
-		str << ",\n  Name: " << this->name;
-		str << ",\n  Type: " << node_type_name(this->type);
-		str << ",\n  Size State: ";
-		{
-			wxCriticalSectionLocker enter(this->size_cs);
-			str << size_state_name(this->size.state);
-			str << ",\n  Size: " << wxFileName::GetHumanReadableSize(this->size.val);
-		}
-		str << ",\n  Parent Name: ";
-		if (this->parent == null)
-			str << "NULL";
-		else
-			str << this->parent->name;
-		str << ",\n  Children names: ";
-		{
-			wxCriticalSectionLocker enter(this->children_cs);
-			if (this->children.size() == 0)
-				str << "NULL";
-			else
-			{
-				// actually has children
-				for (auto child : children)
-				{
-					str << "\n    " << child->name;
-				}
-			}
-		}
-		return str;
 	}
 
 	bool is_root()
@@ -197,6 +170,10 @@ public:
 			}
 		}
 		const wxString path = get_path();
+
+		if (dir_is_inaccessible(path))
+			return; // don't do that...
+
 		wxDir dir(path);
 		assert(dir.IsOpened());
 
@@ -217,11 +194,13 @@ public:
 			has_children = dir.GetNext(&filename);
 		}
 
-		// get all the file names at once, to minimize time that we lock the children
+		// process all files at once, to minimize time that we lock the children
 		{
 			wxCriticalSectionLocker enter(this->children_cs);
 			for (auto file : files)
 			{
+				if (file_is_inaccessible(file))
+					continue;
 				fs_node* node = new fs_node(this, file);
 				//nodes_to_calc_size.push_back(node);
 				children.push_back(node);
@@ -230,6 +209,43 @@ public:
 	}
 };
 
+wxString to_string(fs_node* node)
+{
+	wxString str;
+	if (node == null)
+	{
+		return wxString("NULL Node");
+	}
+	str << "Path: " << node->get_path();
+	str << ",\n  Name: " << node->name;
+	str << ",\n  Type: " << to_string(node->type);
+	str << ",\n  Size State: ";
+	{
+		wxCriticalSectionLocker enter(node->size_cs);
+		str << size_state_name(node->size.state);
+		str << ",\n  Size: " << wxFileName::GetHumanReadableSize(node->size.val);
+	}
+	str << ",\n  Parent Name: ";
+	if (node->parent == null)
+		str << "NULL";
+	else
+		str << node->parent->name;
+	str << ",\n  Children names: ";
+	{
+		wxCriticalSectionLocker enter(node->children_cs);
+		if (node->children.size() == 0)
+			str << "NULL";
+		else
+		{
+			// actually has children
+			for (auto child : node->children)
+			{
+				str << "\n    " << child->name;
+			}
+		}
+	}
+	return str;
+}
 
 class fs_thread : public wxThread
 {
@@ -261,53 +277,69 @@ public:
 		//thread = null;
 	}
 
-	wxULongLong get_size(const wxString& path)
+
+	node_size get_size(const wxString& path)
 	{
 		Node_Type type = get_node_type(path);
 		if (!exists(type))
 		{
 			//con << "Error getting size for: " << path << endl;
-			return wxInvalidSize;
+			return node_size(node_size_state::unable_to_access_all_files, 0);
 		}
 
 		switch (type)
 		{
 		case Node_Type::symlink_file:
-			return 0;
+			return node_size(node_size_state::processing_complete, 0);
 
 		case Node_Type::normal_file:
-			return wxFileName::GetSize(path);
+		{
+			auto size = win_get_size(path);
+			//auto size = wxFileName::GetSize(path);
+			//if (size.state == node_size_state::unable_to_access_all_files)
+			//	return size;
+			return size;
+		}
 
 		case Node_Type::symlink_directory:
-			return 0;
+			return node_size(node_size_state::processing_complete, 0);
 
 		case Node_Type::normal_directory:
 		{
-			wxULongLong node_size = 0;
+			if (dir_is_inaccessible(path))
+				return node_size(node_size_state::unable_to_access_all_files, 0);
+
+			node_size dir_size(node_size_state::processing, 0);
 			wxDir dir(path);
+
 			if (!dir.IsOpened())
 			{
 				//cerr << "Failed to open dir" << endl;
-				return wxInvalidSize;
+				return node_size(node_size_state::unable_to_access_all_files, 0);
 			}
-			if (TestDestroy()) 
-				return wxInvalidSize;
+
+			if (TestDestroy())
+				return node_size(node_size_state::unable_to_access_all_files, wxInvalidSize);
 			const wxString basepath = dir.GetNameWithSep();
+
 			wxString filename;
-			
 			bool has_file = dir.GetFirst(&filename, wxEmptyString, wxDIR_FILES | wxDIR_DIRS | wxDIR_HIDDEN | wxDIR_NO_FOLLOW);
 			while (has_file)
 			{
-				if (TestDestroy()) 
-					return wxInvalidSize;
+				if (TestDestroy())
+					return node_size(node_size_state::unable_to_access_all_files, wxInvalidSize);
 				auto sub_size = get_size(basepath + filename);
-				if (sub_size == wxInvalidSize)
-					return sub_size;
-				node_size += sub_size;
+				if (sub_size.state == node_size_state::unable_to_access_all_files)
+					dir_size.state = node_size_state::unable_to_access_all_files;
+				auto subval = sub_size.val;
+				if (subval != wxInvalidSize)
+					dir_size.val += subval;
+
 				has_file = dir.GetNext(&filename);
 			}
-			return node_size;
-			
+
+			return dir_size;
+
 
 
 			//wxArrayString files;
@@ -326,7 +358,7 @@ public:
 		}
 		}
 		//con << "ERROR: This should be unreachable." << endl;
-		return wxInvalidSize;
+		return node_size(node_size_state::unable_to_access_all_files, 0);
 	}
 
 	wxThread::ExitCode Entry() override
@@ -342,7 +374,7 @@ public:
 		if (TestDestroy()) 
 			return (wxThread::ExitCode)-1;
 
-		if (size == wxInvalidSize)
+		if (size.val == wxInvalidSize)
 		{
 			// getting the size failed
 			App_Event* event = new App_Event(App_Event_IDs::thread_node_size_calc_failed);
@@ -359,8 +391,11 @@ public:
 		{
 			// set the new size
 			wxCriticalSectionLocker enter(node->size_cs);
-			node->size.val = size;
-			node->size.state = node_size_state::processing_complete;
+			node->size.val = size.val;
+			if (size.state == node_size_state::unable_to_access_all_files)
+				node->size.state = size.state;
+			else
+				node->size.state = node_size_state::processing_complete;
 		}
 		if (TestDestroy()) 
 			return (wxThread::ExitCode)-1;
@@ -396,7 +431,7 @@ class fs_model : public wxDataViewModel
 {
 public:
 
-	// @todo: make this an array or vector
+	// @TODO this should probably have a critical section as well
 	vector<fs_node*> roots;
 
 	// @note:	this is the centralized uid source; all uids for this model come from here;
@@ -487,7 +522,8 @@ public:
 			wxCriticalSectionLocker enter(node->size_cs);
 			node->size.state = node_size_state::processing;
 		}
-		ValueChanged(wxDataViewItem(node), 2);
+		ValueChanged(wxDataViewItem(node), fs_column::raw_size);
+		ValueChanged(wxDataViewItem(node), fs_column::readable_size);
 
 		if (thread->Run() != wxTHREAD_NO_ERROR)
 		{
@@ -546,7 +582,71 @@ public:
 		}
 	}
 
+	fs_node* get_node(const wxString& path)
+	{
+		bool case_sensitive = false;
 
+		auto path_name = wxFileName(path);
+		auto volume = path_name.GetVolume() + ":";
+		fs_node* node = null;
+		for (fs_node* root : roots)
+		{
+			if (root->name.IsSameAs(volume, !case_sensitive))
+			{
+				node = root;
+				break;
+			}
+		}
+		if (node == null)
+		{
+			// can't find the root; create it? return null?
+			return null;
+		}
+
+		auto dirs = path_name.GetDirs();
+		int num_dirs = dirs.GetCount();
+		for (int dir_i = 0; dir_i < num_dirs; dir_i++)
+		{
+			wxCriticalSectionLocker enter(node->children_cs);
+			bool child_found = false;
+			int num_children = node->children.size();
+			for (int child_i = 0; child_i < num_children && !child_found; child_i++)
+			{
+				auto child = node->children[child_i];
+				if (child->name.IsSameAs(dirs[dir_i], !case_sensitive))
+				{
+					node = child;
+					child_found = true;
+				}
+			}
+			if (!child_found)
+				return null;
+		}
+
+		// all dirs found; check for filename
+		if (path_name.HasName())
+		{
+			auto name = path_name.GetFullName();
+			bool found = false;
+			wxCriticalSectionLocker enter(node->children_cs);
+			int num_children = node->children.size();
+			for (int i = 0; i < num_children; i++)
+			{
+				auto child = node->children[i];
+				if (child->name.IsSameAs(name, false))
+				{
+					found = true;
+					node = child;
+					break;
+				}
+			}
+			if (!found)
+				return null;
+		}
+
+		// node should be correct directory or file
+		return node;
+	}
 
 	fs_model(wxWindow* window, wxString starting_path)
 	{
@@ -614,12 +714,14 @@ public:
 
 	virtual unsigned int GetColumnCount() const override
 	{
-		return 3;
+		return fs_column::num_columns;
 	}
 
 	// return type as reported by wxVariant
 	virtual wxString GetColumnType(unsigned int col) const override
 	{
+		if (col == fs_column::raw_size)
+			return wxT("ulonglong");
 		return wxT("string");
 	}
 
@@ -630,70 +732,70 @@ public:
 		assert(item.IsOk());
 		fs_node* node = (fs_node*)item.GetID();
 
-		if (col == 0)
+		switch (col)
+		{
+		case fs_column::name:
 		{
 			variant = get_name(node->name);
-		}
-		else if (col == 1)
-		{
-			variant = node_type_name(node->type);
-		}
-		else if (col == 2)
-		{
-			//switch (node->type)
-			//{
+		} break;
 
-			//case Node_Type::normal_directory:
+		case fs_column::type:
+		{
+			variant = to_string(node->type);
+		} break;
+
+		case fs_column::readable_size:
+		{
+			wxCriticalSectionLocker enter(node->size_cs);
+			switch (node->size.state)
+			{
+			case node_size_state::processing:
+			{
+				variant = wxString("Processing.");
+			} break;
+
+			case node_size_state::processing_complete:
+			{
+				if (node->size.val == 0)
+					variant = wxString("0 B");
+				else
+					variant = wxFileName::GetHumanReadableSize(node->size.val);
+			} break;
+
+			case node_size_state::unable_to_access_all_files:
+			{
+				if (node->size.val == 0)
+					variant = wxString("0 B*");
+				else
+					variant = wxFileName::GetHumanReadableSize(node->size.val) + wxString("*");
+			} break;
+
+			case node_size_state::waiting_processing:
+			{
+				variant = wxString("Waiting For Processing.");
+			} break;
+
+			}
+		} break;
+
+		case fs_column::raw_size:
+		{
+			wxULongLong val = 0;
 			{
 				wxCriticalSectionLocker enter(node->size_cs);
-				switch (node->size.state)
-				{
-				case node_size_state::processing:
-				{
-					variant = wxString("Processing.");
-				} break;
-
-				case node_size_state::processing_complete:
-				{
-					if (node->size.val == 0)
-						variant = wxString("0 B");
-					else
-						variant = wxFileName::GetHumanReadableSize(node->size.val);
-				} break;
-
-				case node_size_state::unable_to_access_all_files:
-				{
-					if (node->size.val == 0)
-						variant = wxString("0 B*");
-					else
-						variant = wxFileName::GetHumanReadableSize(node->size.val) + wxString("*");
-				} break;
-
-				case node_size_state::waiting_processing:
-				{
-					variant = wxString("Waiting For Processing.");
-				} break;
-				}					
+				val = node->size.val;
 			}
-			/*break;
+			if (val == wxInvalidSize)
+				variant = (wxULongLong)0;
+			else
+				variant = val;
+		} break;
 
-			case Node_Type::normal_file:
-			{
-				variant = wxFileName::GetHumanReadableSize(node->size);
-			}
-			break;
-
-			case Node_Type::symlink_directory:
-			case Node_Type::symlink_file:
-			{
-				variant = wxString("0 B");
-			}
-			break;
-			}*/
-		}
-		else
+		default:
 		{
-			con << "Error: fs_node does not have a column " << col << endl;
+			con << "ERROR: model does not have a column: " << col << endl;
+			return;
+		} break;
 		}
 	}
 
@@ -775,19 +877,63 @@ public:
 
 	virtual int Compare(const wxDataViewItem &item1, const wxDataViewItem &item2, unsigned int column, bool ascending) const override
 	{
+		//return 0;
 		assert(item1.IsOk() && item2.IsOk());
 		fs_node* node1 = (fs_node*)item1.GetID();
 		fs_node* node2 = (fs_node*)item2.GetID();
 
-		if(column == 0)
+		if(column == 0) // name
 		{
 			wxString name1 = node1->name.Upper();
 			wxString name2 = node2->name.Upper();
+
 			if (ascending)
-				return name1.compare(name2);
+			{
+				auto result = name1.compare(name2);
+				return result;
+			}
 			else
-				return name2.compare(name1);
+			{
+				auto result = name2.compare(name1);
+				return result;
+			}
 		}
+		/*else if (column == fs_column::raw_size) // size
+		{
+			//item1.
+			wxULongLong size1 = 0;
+			wxULongLong size2 = 0;
+			{
+				wxCriticalSectionLocker node1_cs(node1->size_cs);
+				size1 = node1->size.val;
+			}
+
+			{
+				wxCriticalSectionLocker node2_cs(node2->size_cs);
+				size1 = node1->size.val;
+			}
+
+			int size1_greater = -1;
+			int size2_greater = 1;
+			int sizes_equal = 0;
+
+			if (size1 == wxInvalidSize && size2 != wxInvalidSize)
+				return size2_greater;
+
+			if (size1 != wxInvalidSize && size2 == wxInvalidSize)
+				return size1_greater;
+
+			if (size1 == wxInvalidSize && size2 == wxInvalidSize)
+				return sizes_equal;
+
+			if (size1 > size2)
+				return size1_greater;
+
+			if (size2 > size1)
+				return size2_greater;
+
+			return sizes_equal;
+		}*/
 		return wxDataViewModel::Compare(item1, item2, column, ascending);
 		//
 		//switch (column)

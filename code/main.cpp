@@ -1,7 +1,6 @@
 ﻿#include "stdafx.h"
 #include "fae_lib.h"
 #include "fae_string.h"
-#include "fae_filesystem.h"
 #include "console.h"
 #include "new_filesystem.h"
 #include "dir_data_view.h"
@@ -27,7 +26,20 @@
 		Gonna attempt option 2.
 
 
-@TODO:
+
+@TODO list:
+	@Bug: Debugging access violation exception thrown when a directory is expanded
+		It only happens for directories that are partially access-denied (their size are marked with an
+		*) An example: C:\Program Data\Microsoft\Diagnostics (Diagnosis?)
+	@Bug: I can't figure out how to sort the display items by size (because their sizes are constantly changing)
+		I could theoretically add a sizes_frozen variable to the model and only sort when all sizes are frozen
+		Or I could adjust the readable_size compare to parse the readable size string into a number for the comparison
+	@Feature: Implement the display with Sashes, so users can adjust element sizes
+	@Feature @Bug @Expand: the fs_threads currently only calculate size, rather than creating nodes
+		for all of the files/directories they visit. Not sure if this will end up being better or worse than
+		just calculating sizes as directories are opened
+
+
 	@Robustness? Add function for checking if files are identical, once I add file processing
 	@Bug Figure out why I can't "cd c:\" but I can "cd c:\dev"
 
@@ -70,6 +82,10 @@ void run_tests()
 		//assert(get_node_type("D:\\") == Node_Type::nt_normal_directory);
 		//assert(get_node_type("D:") == Node_Type::nt_normal_directory);
 		//assert(get_node_type("D") == Node_Type::nt_not_exist);
+	}
+
+	{
+		bool accessible = dir_is_inaccessible("C:\\dev\\");
 	}
 
 
@@ -132,8 +148,7 @@ public:
 	MyFrame(const wxString& title, const wxPoint& pos, const wxSize& size)
 		: wxFrame(NULL, wxID_ANY, title, pos, size)
 	{
-		panel = null;
-		ctrl = null;
+		data_view = null;
 		model = null;
 
 		init_settings();
@@ -195,44 +210,50 @@ public:
 
 		// data view control dataviewctrl
 		{
-			panel = new wxPanel(this, wxID_ANY);
+			auto panel = new wxPanel(this, wxID_ANY);
 
 			// Navigation View
-			ctrl = new wxDataViewCtrl(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxDV_ROW_LINES);
+			data_view = new wxDataViewCtrl(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxDV_ROW_LINES);
 			model = new fs_model(this, "C:\\dev");
 			//model = new fs_model(Settings.test_data_source.GetFullPath());
 			Model = model;
-			ctrl->AssociateModel(model.get());
+			data_view->AssociateModel(model.get());
 
 			auto text_renderer = new wxDataViewTextRenderer("string", wxDATAVIEW_CELL_INERT);
-			wxDataViewColumn* col0 = new wxDataViewColumn("Path", text_renderer, 0, 350,
+			wxDataViewColumn* col0 = new wxDataViewColumn("Path", text_renderer, fs_column::name, 350,
 				wxALIGN_LEFT, wxDATAVIEW_COL_SORTABLE | wxDATAVIEW_COL_RESIZABLE);
-			ctrl->AppendColumn(col0);
+			data_view->AppendColumn(col0);
 
 			col0->SetSortOrder(true);
 
 			text_renderer = new wxDataViewTextRenderer("string", wxDATAVIEW_CELL_INERT);
-			wxDataViewColumn* col1 = new wxDataViewColumn("Node Type", text_renderer, 1, 170,
+			wxDataViewColumn* col1 = new wxDataViewColumn("Node Type", text_renderer, fs_column::type, 170,
 				wxALIGN_LEFT, wxDATAVIEW_COL_SORTABLE | wxDATAVIEW_COL_RESIZABLE);
-			ctrl->AppendColumn(col1);
+			data_view->AppendColumn(col1);
 
 			text_renderer = new wxDataViewTextRenderer("string", wxDATAVIEW_CELL_INERT);
-			wxDataViewColumn* col2 = new wxDataViewColumn("Size", text_renderer, 2, 120,
+			wxDataViewColumn* col2 = new wxDataViewColumn("Size", text_renderer, fs_column::readable_size, 120,
 				wxALIGN_LEFT, wxDATAVIEW_COL_SORTABLE | wxDATAVIEW_COL_RESIZABLE);
-			ctrl->AppendColumn(col2);
+			data_view->AppendColumn(col2);
+
+			//text_renderer = new wxDataViewTextRenderer("ulonglong", wxDATAVIEW_CELL_INERT);
+			//wxDataViewColumn* col3 = new wxDataViewColumn("Raw Size", text_renderer, fs_column::raw_size, 80,
+			//	wxALIGN_LEFT, wxDATAVIEW_COL_SORTABLE | wxDATAVIEW_COL_RESIZABLE);
+			//data_view->AppendColumn(col3);
 
 			wxSizer *panel_sizer = new wxBoxSizer(wxVERTICAL);
-			ctrl->SetMinSize(wxSize(640, 200));
-			panel_sizer->Add(ctrl, 1, wxGROW | wxALL, 5);
+			data_view->SetMinSize(wxSize(640, 280));
+			panel_sizer->Add(data_view, 1, wxGROW | wxALL, 5);
 
 			panel->SetSizerAndFit(panel_sizer);
 			window_sizer->Add(panel, 1, wxEXPAND, 0);
 
-			ctrl->SetIndent(10);
+			data_view->SetIndent(10);
 		}
 
 		Bind(wxEVT_DATAVIEW_ITEM_EXPANDING, &MyFrame::on_data_view_item_expanding, this);
 		Bind(wxEVT_DATAVIEW_ITEM_ACTIVATED, &MyFrame::on_model_item_double_clicked, this);
+		//Bind(wxEVT_DATAVIEW_COLUMN_SORTED, &MyFrame::on_model_resort, this);
 
 		Bind(App_Event_Type, &MyFrame::on_nodes_added_to_model, this, (int)App_Event_IDs::nodes_added);
 		Bind(App_Event_Type, &MyFrame::on_node_size_calc_failed, this, (int)App_Event_IDs::thread_node_size_calc_failed);
@@ -263,14 +284,34 @@ public:
 		timer->Start(time_between_thread_counts); // milliseconds
 		
 		//Bind(wxEVT_SIZE, &MyFrame::on_window_resized, this);
-
 	}
 
 	wxTimer* timer;
-	wxPanel* panel;
-	wxDataViewCtrl* ctrl;
+	wxDataViewCtrl* data_view;
 	wxObjectDataPtr<fs_model> model;
 	const int time_between_thread_counts = 500; // miliseconds
+
+	void sort_ctrl(wxDataViewColumn* column, bool ascending)
+	{
+		auto children = data_view->GetChildren();
+	}
+
+	void on_model_resort(wxDataViewEvent& event)
+	{
+		event.Skip();
+		auto column = data_view->GetSortingColumn();
+		if (column != null)
+		{
+			bool ascending = column->IsSortOrderAscending();
+			sort_ctrl(column, ascending);
+		}
+		else
+		{
+			con << "column was null (sorting)" << endl;
+		}
+		con << "Model Resorted" << endl;
+		event.Veto();
+	}
 
 	void on_window_resized(wxSizeEvent& event)
 	{
@@ -327,17 +368,58 @@ public:
 		auto item = event.GetItem();
 		assert(item.IsOk());
 		fs_node* node = (fs_node*)item.GetID();
-		con << node->to_string() << endl;
+		con << to_string(node) << endl;
 	}
 
 	void on_test_button(wxCommandEvent& event)
 	{
-		con << "Starting tests." << endl;
-		test_list_items_in_dir();
-		test_copy_one_dir_to_another();
-		test_relocate_dir();
-		test_restore_dir();
-		con << "Tests finished successfully." << endl;
+		wxString dir_path = "C:\\dev\\test_data\\";
+		fs_node* dir_node = model->get_node(dir_path);
+		con << dir_path << ": " << to_string(dir_node) << endl << endl;
+
+		wxString file_path = "C:\\dev\\test_data\\test_a.txt";
+		fs_node* file_node = model->get_node(file_path);
+		con << file_path << ": " << to_string(file_node) << endl << endl;
+
+		if (dir_node != null)
+		{
+			if (dir_node->type == Node_Type::normal_directory)
+			{
+				if (relocate(dir_path))
+				{
+					con << "Successfully relocated " << dir_path << endl;
+					dir_node->refresh();
+					model->ItemChanged((wxDataViewItem)dir_node);
+					con << dir_path << ": " << to_string(dir_node) << endl;
+				}
+				else
+					con << "Failed to relocate: " << dir_path << endl;
+					
+			}
+			else if (dir_node->type == Node_Type::symlink_directory)
+			{
+				if (restore(dir_path))
+				{
+					con << "Successfully restored " << dir_path << endl;
+					dir_node->refresh();
+					model->ItemChanged((wxDataViewItem)dir_node);
+					con << dir_path << ": " << to_string(dir_node) << endl;
+				}
+				else
+					con << "Failed to relocate: " << dir_path << endl;
+			}
+			else
+				con << "ERROR: DIR NODE IS OF TYPE: " << to_string(dir_node->type);
+		}
+
+		//con << "Starting tests." << endl;
+		//test_list_items_in_dir();
+		//test_copy_one_dir_to_another();
+		//test_relocate_dir();
+		//test_restore_dir();
+		//con << "Tests finished successfully." << endl;
+
+		//con << node1->size.val << ", " << node2->size.val << wxDataViewModel::Compare(item1, item2, column, ascending);
 	}
 
 	void on_data_view_item_expanding(wxDataViewEvent& event)
@@ -345,8 +427,11 @@ public:
 		auto item = event.GetItem();
 		assert(item.IsOk());
 		auto node = (fs_node*)event.GetItem().GetID();
-		if (node->type != Node_Type::normal_directory)
+		if (node->type != Node_Type::normal_directory || dir_is_inaccessible(node->get_path()))
+		{
+			event.Veto();
 			return;
+		}
 
 		wxString path = node->get_path();
 		//con << "on_data_view_item_expanding() path: " << path << endl;
@@ -411,6 +496,9 @@ public:
 		{
 			if (wxMessageBox(wxT("Are you sure to quit ? "), wxT("Confirm Quit"), wxICON_QUESTION | wxYES_NO) == wxYES)
 			{
+				// close everything
+				timer->Stop();
+
 				model->kill_threads();
 				event.Skip(); //Destroy() also works here.
 				Destroy();

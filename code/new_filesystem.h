@@ -3,7 +3,89 @@
 
 #include "console.h"
 #include "settings.h"
-#include "fae_filesystem.h"
+
+
+enum struct Node_Type : int
+{
+	not_exist = 0,
+	normal_file,
+	normal_directory,
+	symlink_file,
+	symlink_directory,
+	num_types
+};
+
+string to_string(Node_Type type)
+{
+	switch (type)
+	{
+	case Node_Type::not_exist:
+		return "'Non-Existant'";
+	case Node_Type::normal_file:
+		return "'Normal File'";
+	case Node_Type::normal_directory:
+		return "'Normal Directory'";
+	case Node_Type::symlink_file:
+		return "'Symbolic Linked File'";
+	case Node_Type::symlink_directory:
+		return "'Symbolic Linked Directory'";
+	default:
+		return "ERROR INVALID TYPE";
+	}
+}
+
+bool exists(Node_Type type)
+{
+	return type > Node_Type::not_exist && type < Node_Type::num_types;
+}
+
+Node_Type get_node_type(WIN32_FIND_DATA &data)
+{
+	if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+	{
+		// target is directory
+		if (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT && data.dwReserved0 & IO_REPARSE_TAG_SYMLINK)
+			return Node_Type::symlink_directory;
+		else
+			return Node_Type::normal_directory;
+	}
+	else
+	{
+		// target is file
+		if (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT && data.dwReserved0 & IO_REPARSE_TAG_SYMLINK)
+			return Node_Type::symlink_file;
+		else
+			return Node_Type::normal_file;
+	}
+}
+
+Node_Type get_node_type(const wxString& path)
+{
+	wxString path_name;
+	if (path.length() > MAX_PATH)
+		path_name.append(L"\\\\?\\");
+
+	path_name.append(path);
+	if (wxFileName::IsPathSeparator(path_name.at(path_name.length() - 1)))
+		path_name.RemoveLast();
+
+	WIN32_FIND_DATA data;
+	HANDLE handle = FindFirstFile(path_name.wchar_str(), &data);
+	Node_Type type = Node_Type::not_exist;
+	if (handle == INVALID_HANDLE_VALUE)
+	{
+		return Node_Type::not_exist;
+	}
+	type = get_node_type(data);
+	FindClose(handle);
+	return type;
+}
+
+void remove_trailing_path_separator(wxWritableWCharBuffer& path)
+{
+	if (wxFileName::IsPathSeparator(path.data()[path.length() - 1]))
+		path.data()[path.length() - 1] = 0;
+}
 
 wxULongLong get_size(const wxString& path, Node_Type type = Node_Type::not_exist)
 {
@@ -121,7 +203,7 @@ void list_items_in_dir(wxString& dir_string, int depth, std::vector<File_Record>
 			records.push_back({filename, file_type});
 			for (int i = 0; i < depth; i++)
 				con << "     ";
-			con << filename << ": " << node_type_name(file_type) << endl;
+			con << filename << ": " << to_string(file_type) << endl;
 			if (file_type == Node_Type::normal_directory)
 			{
 				list_items_in_dir(fullname, depth+1, records);
@@ -149,7 +231,7 @@ void test_list_items_in_dir()
 	for (size_t i = 0; i < records.size(); i++)
 	{
 		File_Record& record = records[i];
-		con << "Record " << i << ": {" << node_type_name(record.filetype) << ", " << record.filename << "}" << endl;
+		con << "Record " << i << ": {" << to_string(record.filetype) << ", " << record.filename << "}" << endl;
 	}
 }
 
@@ -187,11 +269,7 @@ bool get_target_of_symlink(const wxString& link_path, wxString& target_out)
 
 	HANDLE linked_handle = INVALID_HANDLE_VALUE;
 	wxWritableWCharBuffer link_path_w = link_path.wchar_str();
-	if (wxFileName::IsPathSeparator(link_path_w[link_path_w.length()]))
-	{
-		// windows doesn't want a trailing slash at the end of filenames, so remove it
-		link_path_w.data()[link_path_w.length() - 1] = 0;
-	}
+	remove_trailing_path_separator(link_path_w);
 
 	{
 		linked_handle = CreateFile(
@@ -308,7 +386,7 @@ bool copy_recursive(const wxString& source, const wxString& dest)
 		return copy_symlink(source, dest);
 
 	default:
-		con << "ERROR: " << source << " is of type: " << node_type_name(source_type) + "Unable to copy." << endl;
+		con << "ERROR: " << source << " is of type: " << to_string(source_type) + "Unable to copy." << endl;
 		return false;
 	}
 }
@@ -482,3 +560,94 @@ if (wxFileName::Exists(filename, wxFILE_EXISTS_SYMLINK))
 	con << "Symlink: " << filename << "?" << endl;
 }
 */
+
+enum struct node_size_state : int
+{
+	waiting_processing,
+	processing,
+	unable_to_access_all_files,
+	processing_complete
+};
+
+wxString size_state_name(node_size_state state)
+{
+	switch (state)
+	{
+	case node_size_state::waiting_processing:
+		return "'Waiting for Processing'";
+	case node_size_state::processing:
+		return "'Processing'";
+	case node_size_state::unable_to_access_all_files:
+		return "'Unable to Process All Files'";
+	case node_size_state::processing_complete:
+		return "'Processing Complete'";
+	}
+	assert(false); // shouldn't get here
+	return "ERROR: INVALID STATE";
+}
+
+struct node_size
+{
+	node_size(node_size_state state, wxULongLong val) : state(state), val(val) {}
+	node_size_state state;
+	wxULongLong val;
+};
+
+node_size win_get_size(const wxString& path)
+{
+	auto path_w = path.wchar_str();
+	remove_trailing_path_separator(path_w);
+
+	WIN32_FIND_DATA data;
+	HANDLE handle = FindFirstFile(path_w, &data);
+	node_size size(node_size_state::unable_to_access_all_files, 0);
+
+	if (handle == INVALID_HANDLE_VALUE)
+	{
+		return size;
+	}
+
+	// handle and data are valid
+	LARGE_INTEGER val;
+	val.LowPart = data.nFileSizeLow;
+	val.HighPart = data.nFileSizeHigh;
+	FindClose(handle);
+
+	size.val = val.QuadPart;
+	size.state = node_size_state::processing_complete;
+	return size;
+}
+
+bool file_is_inaccessible(const wxString& path)
+{
+	auto path_w = path.wchar_str();
+	remove_trailing_path_separator(path_w);
+
+	WIN32_FIND_DATA data;
+	HANDLE handle = FindFirstFile(path_w, &data);
+	if (handle == INVALID_HANDLE_VALUE)
+		return true;
+	
+	FindClose(handle);
+	return false;
+}
+
+bool dir_is_inaccessible(const wxString& path)
+{
+	wxString search_path = path;
+	if (!wxFileName::IsPathSeparator(search_path.Last()))
+		search_path.append(wxFileName::GetPathSeparator());
+	search_path.append("*");
+
+	auto search_path_w = search_path.wchar_str();
+
+	WIN32_FIND_DATA data;
+	HANDLE handle = FindFirstFile(search_path_w, &data);
+	if (handle == INVALID_HANDLE_VALUE)
+	{
+		return true;
+	}
+
+	FindClose(handle);
+	return false;
+}

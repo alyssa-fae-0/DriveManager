@@ -26,9 +26,6 @@
     <ClInclude Include="code\fae_string.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="code\fae_filesystem.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="code\misc.h">
       <Filter>Header Files</Filter>
     </ClInclude>
