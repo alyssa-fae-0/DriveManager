@@ -57,9 +57,6 @@ public:
 	vector<fs_node*> children;
 	wxCriticalSection children_cs;
 
-	//wxString path; // on the chopping block
-
-
 	fs_node(fs_node* parent, const wxString& path) : size(node_size_state::waiting_processing, 0)
 	{
 		//con << "Creating node: " << path << endl;
@@ -95,15 +92,49 @@ public:
 		//if (type == Node_Type::nt_normal_directory) con << "size calculated" << endl;
 	}
 
-	void refresh()
+	void remove(wxDataViewItemArray& deleted_items)
 	{
+		{
+			// remove any children
+			wxCriticalSectionLocker enter(this->children_cs);
+			for (int i = 0, num_children = children.size(); i < num_children; i++)
+			{
+				fs_node* child = children[i];
+				if (child != null)
+				{
+					child->remove(deleted_items);
+					delete child;
+					children[i] = null;
+				}
+			}
+		}
+
+		// add this node to the list after its children (if applicable)
+		deleted_items.push_back((wxDataViewItem)this);
+	}
+
+	void refresh(wxDataViewItemArray& changed_items, wxDataViewItemArray& deleted_items)
+	{
+		bool type_changed = false;
+		bool size_changed = false;
+
 		auto path = get_path();
-		this->type = get_node_type(path);
+		auto new_type = get_node_type(path);
+
+		if (new_type != this->type)
+		{
+			type_changed = true;
+			this->type = new_type;
+		}
 
 		if (this->type != Node_Type::normal_directory)
 		{
 			auto val = get_size(path);
 			wxCriticalSectionLocker enter(size_cs);
+			if (this->size.val != val)
+			{
+				size_changed = true;
+			}
 			this->size.val = val;
 			this->size.state = node_size_state::processing_complete;
 		}
@@ -118,6 +149,27 @@ public:
 			{
 				wxCriticalSectionLocker enter(nodes_to_calc_size_cs);
 				nodes_to_calc_size.push_back(this);
+			}
+		}
+
+		if (size_changed || type_changed)
+		{
+			changed_items.push_back((wxDataViewItem)this);
+			if (this->type != Node_Type::normal_directory)
+			{
+				// remove any children
+				wxCriticalSectionLocker enter(this->children_cs);
+				for(int i = 0, num_children = children.size(); i < num_children; i++)
+				{
+					fs_node* child = children[i];
+					if (child != null)
+					{
+						child->remove(deleted_items);
+						delete child;
+						children[i] = null;
+					}
+				}
+				children.clear();
 			}
 		}
 	}
@@ -449,6 +501,21 @@ public:
 	int max_threads;
 
 	wxWindow* window;
+
+	void refresh(fs_node* node)
+	{
+		wxDataViewItemArray updated_items;
+		wxDataViewItemArray deleted_items;
+		node->refresh(updated_items, deleted_items);
+		if(deleted_items.Count() != 0)
+			this->ItemsDeleted(wxDataViewItem(node), deleted_items);
+		//if(updated_items.Count() != 0)
+		//	this->ItemsChanged(updated_items);
+
+		// @hack this ugly hack is to...
+		this->ItemDeleted((wxDataViewItem)node->parent, (wxDataViewItem)node);
+		this->ItemAdded((wxDataViewItem)node->parent, (wxDataViewItem)node);
+	}
 
 	u32 get_new_uid() 
 	{

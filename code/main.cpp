@@ -27,6 +27,7 @@
 
 
 
+
 @TODO list:
 	@Bug: Debugging access violation exception thrown when a directory is expanded
 		It only happens for directories that are partially access-denied (their size are marked with an
@@ -38,6 +39,9 @@
 	@Feature @Bug @Expand: the fs_threads currently only calculate size, rather than creating nodes
 		for all of the files/directories they visit. Not sure if this will end up being better or worse than
 		just calculating sizes as directories are opened
+	@Bug: if a node's size is recalculating when it gets removed, the thread recalculating it will probably break; 
+	@Bug: if a node starts as a symlinked directory, when it gets changed to a normal directory, 
+		the dataview controller won't recognize it as a container
 
 
 	@Robustness? Add function for checking if files are identical, once I add file processing
@@ -61,9 +65,9 @@ App_Settings Settings;
 //
 //vector<Test_Result> tests;
 //
-//#define Test(name) void name() 
+//#define Test(name) void name()
 //#define Require(expression) tests.push_back({#expression, expression});
-//#define test_are_equal(a,b) 
+//#define test_are_equal(a,b)
 
 // As before, define a new wxEventType
 wxDEFINE_EVENT(App_Event_Type, App_Event);
@@ -78,7 +82,7 @@ void run_tests()
 		assert(get_node_type("C") == Node_Type::not_exist);
 
 		// @BUG: these should be correct... @TODO: look into why I can call function
-		//		 on "C:\\" but not "D:\\"
+		//	@	 on "C:\\" but not "D:\\"
 		//assert(get_node_type("D:\\") == Node_Type::nt_normal_directory);
 		//assert(get_node_type("D:") == Node_Type::nt_normal_directory);
 		//assert(get_node_type("D") == Node_Type::nt_not_exist);
@@ -113,6 +117,7 @@ enum struct id : int
 	console_id,
 	scroll_button,
 	thread_count_timer_id,
+	get_num_active_threads,
 	num_ids
 };
 
@@ -282,7 +287,7 @@ public:
 
 		SetSizerAndFit(window_sizer);
 		timer->Start(time_between_thread_counts); // milliseconds
-		
+
 		//Bind(wxEVT_SIZE, &MyFrame::on_window_resized, this);
 	}
 
@@ -365,51 +370,62 @@ public:
 
 	void on_model_item_double_clicked(wxDataViewEvent& event)
 	{
+		con << endl;
 		auto item = event.GetItem();
 		assert(item.IsOk());
 		fs_node* node = (fs_node*)item.GetID();
 		con << to_string(node) << endl;
+		//con << "pre" << endl;
+		//model->refresh(node);
+		//con << "post" << endl;
+		//con << to_string(node) << endl;
+
+		//con << endl << endl;
 	}
 
 	void on_test_button(wxCommandEvent& event)
 	{
-		wxString dir_path = "C:\\dev\\test_data\\";
-		fs_node* dir_node = model->get_node(dir_path);
-		con << dir_path << ": " << to_string(dir_node) << endl << endl;
-
-		wxString file_path = "C:\\dev\\test_data\\test_a.txt";
-		fs_node* file_node = model->get_node(file_path);
-		con << file_path << ": " << to_string(file_node) << endl << endl;
-
-		if (dir_node != null)
 		{
-			if (dir_node->type == Node_Type::normal_directory)
+			wxString file_path = "C:\\dev\\test_data\\test_a.txt";
+			fs_node* file_node = model->get_node(file_path);
+			con << file_path << ": " << to_string(file_node) << endl << endl;
+		}
+
+		{
+			wxString dir_path = "C:\\dev\\test_data\\";
+			fs_node* dir_node = model->get_node(dir_path);
+			con << dir_path << ": " << to_string(dir_node) << endl << endl;
+
+			if (dir_node != null)
 			{
-				if (relocate(dir_path))
+				if (dir_node->type == Node_Type::normal_directory)
 				{
-					con << "Successfully relocated " << dir_path << endl;
-					dir_node->refresh();
-					model->ItemChanged((wxDataViewItem)dir_node);
-					con << dir_path << ": " << to_string(dir_node) << endl;
+					if (relocate(dir_path))
+					{
+						con << "Successfully relocated " << dir_path << endl;
+						model->refresh(dir_node);
+						model->ItemChanged((wxDataViewItem)dir_node);
+						con << dir_path << ": " << to_string(dir_node) << endl;
+					}
+					else
+						con << "Failed to relocate: " << dir_path << endl;
+
+				}
+				else if (dir_node->type == Node_Type::symlink_directory)
+				{
+					if (restore(dir_path))
+					{
+						con << "Successfully restored " << dir_path << endl;
+						model->refresh(dir_node);
+						model->ItemChanged((wxDataViewItem)dir_node);
+						con << dir_path << ": " << to_string(dir_node) << endl;
+					}
+					else
+						con << "Failed to relocate: " << dir_path << endl;
 				}
 				else
-					con << "Failed to relocate: " << dir_path << endl;
-					
+					con << "ERROR: DIR NODE IS OF TYPE: " << to_string(dir_node->type);
 			}
-			else if (dir_node->type == Node_Type::symlink_directory)
-			{
-				if (restore(dir_path))
-				{
-					con << "Successfully restored " << dir_path << endl;
-					dir_node->refresh();
-					model->ItemChanged((wxDataViewItem)dir_node);
-					con << dir_path << ": " << to_string(dir_node) << endl;
-				}
-				else
-					con << "Failed to relocate: " << dir_path << endl;
-			}
-			else
-				con << "ERROR: DIR NODE IS OF TYPE: " << to_string(dir_node->type);
 		}
 
 		//con << "Starting tests." << endl;
