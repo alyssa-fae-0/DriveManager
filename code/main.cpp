@@ -143,6 +143,8 @@ wxCriticalSection con_cs;
 wxObjectDataPtr<fs_model> Model;
 vector<fs_node*> nodes_to_calc_size;
 wxCriticalSection nodes_to_calc_size_cs;
+vector<fs_node*> recycled_nodes;
+wxCriticalSection recycled_nodes_cs;
 
 
 class MyFrame : public wxFrame
@@ -388,13 +390,14 @@ public:
 		{
 			wxString file_path = "C:\\dev\\test_data\\test_a.txt";
 			fs_node* file_node = model->get_node(file_path);
-			con << file_path << ": " << to_string(file_node) << endl << endl;
+			//con << file_path << ": " << to_string(file_node) << endl << endl;
 		}
 
+		
 		{
 			wxString dir_path = "C:\\dev\\test_data\\";
 			fs_node* dir_node = model->get_node(dir_path);
-			con << dir_path << ": " << to_string(dir_node) << endl << endl;
+			//con << dir_path << ": " << to_string(dir_node) << endl << endl;
 
 			if (dir_node != null)
 			{
@@ -402,23 +405,22 @@ public:
 				{
 					if (relocate(dir_path))
 					{
-						con << "Successfully relocated " << dir_path << endl;
+						//con << "Successfully relocated " << dir_path << endl;
 						model->refresh(dir_node);
 						model->ItemChanged((wxDataViewItem)dir_node);
-						con << dir_path << ": " << to_string(dir_node) << endl;
+						//con << dir_path << ": " << to_string(dir_node) << endl;
 					}
 					else
 						con << "Failed to relocate: " << dir_path << endl;
-
 				}
 				else if (dir_node->type == Node_Type::symlink_directory)
 				{
 					if (restore(dir_path))
 					{
-						con << "Successfully restored " << dir_path << endl;
+						//con << "Successfully restored " << dir_path << endl;
 						model->refresh(dir_node);
 						model->ItemChanged((wxDataViewItem)dir_node);
-						con << dir_path << ": " << to_string(dir_node) << endl;
+						//con << dir_path << ": " << to_string(dir_node) << endl;
 					}
 					else
 						con << "Failed to relocate: " << dir_path << endl;
@@ -443,6 +445,9 @@ public:
 		auto item = event.GetItem();
 		assert(item.IsOk());
 		auto node = (fs_node*)event.GetItem().GetID();
+		if (node == null)
+			return;
+		locker enter(node->lock);
 		if (node->type != Node_Type::normal_directory || dir_is_inaccessible(node->get_path()))
 		{
 			event.Veto();

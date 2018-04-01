@@ -10,7 +10,7 @@ enum struct App_Event_IDs  : int
 	num_active_threads_update
 };
 
-class fs_node;
+struct fs_node;
 
 class App_Event;
 wxDECLARE_EVENT(App_Event_Type, App_Event);

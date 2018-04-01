@@ -588,6 +588,7 @@ wxString size_state_name(node_size_state state)
 
 struct node_size
 {
+	node_size() {}
 	node_size(node_size_state state, wxULongLong val) : state(state), val(val) {}
 	node_size_state state;
 	wxULongLong val;

@@ -3,33 +3,36 @@
 #include "new_filesystem.h"
 #include "app_events.h"
 
-class fs_model;
+struct fs_model;
 extern wxObjectDataPtr<fs_model> Model;
 
-class fs_node;
+struct fs_node;
 extern vector<fs_node*> nodes_to_calc_size;
 extern wxCriticalSection nodes_to_calc_size_cs;
 
-//struct nullable_size
-//{
-//	nullable_size()
-//	{
-//		is_null = true;
-//		size = 0;
-//	}
-//
-//	nullable_size(bool is_null, wxULongLong size)
-//		: is_null(is_null), size(size) 
-//	{ }
-//
-//	operator wxULongLong() 
-//	{
-//		return size;
-//	}
-//
-//	bool is_null;
-//	wxULongLong size;
-//};
+extern vector<fs_node*> recycled_nodes;
+extern wxCriticalSection recycled_nodes_cs;
+
+#define locker wxCriticalSectionLocker
+
+
+void recycle(fs_node* node)
+{
+	locker enter(recycled_nodes_cs);
+	recycled_nodes.push_back(node);
+}
+
+fs_node* get_recycled_node()
+{
+	fs_node* node = null;
+	locker enter(recycled_nodes_cs);
+	if (recycled_nodes.size() > 0)
+	{
+		node = recycled_nodes.back();	
+		recycled_nodes.pop_back();
+	}
+	return node;
+}
 
 namespace fs_column
 {
@@ -42,22 +45,31 @@ namespace fs_column
 	};
 }
 
-class fs_node
+
+struct fs_node
 {
-public:
 
 	//u32 uid;
 	wxString name;
 	Node_Type type;
 
 	node_size size;
-	wxCriticalSection size_cs;
 
 	fs_node* parent;
 	vector<fs_node*> children;
-	wxCriticalSection children_cs;
+	wxCriticalSection lock;
 
-	fs_node(fs_node* parent, const wxString& path) : size(node_size_state::waiting_processing, 0)
+	fs_node()
+	{
+
+	}
+
+	fs_node(fs_node* parent, const wxString& path)
+	{
+		init(parent, path);
+	}
+
+	void init(fs_node* parent, const wxString& path)
 	{
 		//con << "Creating node: " << path << endl;
 		//this->uid = uid;
@@ -66,12 +78,12 @@ public:
 
 		this->type = get_node_type(path);
 		// if (type == Node_Type::nt_normal_directory) con << "calculating size for " << path << endl;
-		
-		
+
+		this->size = node_size(node_size_state::waiting_processing, 0);
+
 		if (this->type != Node_Type::normal_directory)
 		{
 			auto val = get_size(path);
-			wxCriticalSectionLocker enter(size_cs);
 			this->size.val = val;
 			this->size.state = node_size_state::processing_complete;
 		}
@@ -79,33 +91,30 @@ public:
 		{
 			{
 				auto val = wxInvalidSize;
-				wxCriticalSectionLocker(this->size_cs);
 				size.val = val;
 				size.state = node_size_state::waiting_processing;
 			}
 			{
-				wxCriticalSectionLocker enter(nodes_to_calc_size_cs);
+				locker enter(nodes_to_calc_size_cs);
 				nodes_to_calc_size.push_back(this);
 			}
 		}
-		
+
 		//if (type == Node_Type::nt_normal_directory) con << "size calculated" << endl;
 	}
 
 	void remove(wxDataViewItemArray& deleted_items)
 	{
+		// remove any children
+		for (int i = 0, num_children = children.size(); i < num_children; i++)
 		{
-			// remove any children
-			wxCriticalSectionLocker enter(this->children_cs);
-			for (int i = 0, num_children = children.size(); i < num_children; i++)
+			fs_node* child = children[i];
+			if (child != null)
 			{
-				fs_node* child = children[i];
-				if (child != null)
-				{
-					child->remove(deleted_items);
-					delete child;
-					children[i] = null;
-				}
+				locker enter(child->lock);
+				child->remove(deleted_items);
+				children[i] = null;
+				recycle(child);
 			}
 		}
 
@@ -130,7 +139,6 @@ public:
 		if (this->type != Node_Type::normal_directory)
 		{
 			auto val = get_size(path);
-			wxCriticalSectionLocker enter(size_cs);
 			if (this->size.val != val)
 			{
 				size_changed = true;
@@ -142,12 +150,11 @@ public:
 		{
 			{
 				auto val = wxInvalidSize;
-				wxCriticalSectionLocker(this->size_cs);
 				size.val = val;
 				size.state = node_size_state::waiting_processing;
 			}
 			{
-				wxCriticalSectionLocker enter(nodes_to_calc_size_cs);
+				locker enter(nodes_to_calc_size_cs);
 				nodes_to_calc_size.push_back(this);
 			}
 		}
@@ -158,15 +165,15 @@ public:
 			if (this->type != Node_Type::normal_directory)
 			{
 				// remove any children
-				wxCriticalSectionLocker enter(this->children_cs);
 				for(int i = 0, num_children = children.size(); i < num_children; i++)
 				{
 					fs_node* child = children[i];
 					if (child != null)
 					{
 						child->remove(deleted_items);
-						delete child;
+						locker enter(child->lock);
 						children[i] = null;
+						recycle(child);
 					}
 				}
 				children.clear();
@@ -191,6 +198,7 @@ public:
 	{
 		if (!is_root())
 		{
+			locker enter(parent->lock);
 			parent->build_path(path);
 		}
 		path.append(name);
@@ -200,11 +208,7 @@ public:
 	wxString get_path()
 	{
 		wxString path;
-		if (parent != null)
-		{
-			parent->build_path(path);
-		}
-		path.append(name);
+		build_path(path);
 		//con << "Built path: " << path << endl;
 		return path;
 	}
@@ -214,12 +218,9 @@ public:
 	// @hack
 	void update_children()
 	{
+		if (children.size() != 0)
 		{
-			wxCriticalSectionLocker enter(children_cs);
-			if (children.size() != 0)
-			{
-				return;
-			}
+			return;
 		}
 		const wxString path = get_path();
 
@@ -245,63 +246,71 @@ public:
 			files.push_back(base + filename);
 			has_children = dir.GetNext(&filename);
 		}
-
-		// process all files at once, to minimize time that we lock the children
+		
+		for (auto file : files)
 		{
-			wxCriticalSectionLocker enter(this->children_cs);
-			for (auto file : files)
+			if (file_is_inaccessible(file))
+				continue;
+			fs_node* node = get_recycled_node();
+			if (node != null)
 			{
-				if (file_is_inaccessible(file))
-					continue;
-				fs_node* node = new fs_node(this, file);
-				//nodes_to_calc_size.push_back(node);
-				children.push_back(node);
+				locker enter(node->lock);
+				node->init(this, file);
 			}
+			else
+			{
+				node = new fs_node(this, file);
+			}
+			children.push_back(node);
 		}
 	}
 };
 
-wxString to_string(fs_node* node)
+fs_node* new_node()
 {
-	wxString str;
+	fs_node* node = get_recycled_node();
+	if (node == null)
+		node = new fs_node();
+	return node;
+}
+
+
+wxString to_string(fs_node* node)
+{	
 	if (node == null)
 	{
 		return wxString("NULL Node");
 	}
+	wxCriticalSectionLocker enter(node->lock);
+	wxString str;
 	str << "Path: " << node->get_path();
 	str << ",\n  Name: " << node->name;
 	str << ",\n  Type: " << to_string(node->type);
-	str << ",\n  Size State: ";
-	{
-		wxCriticalSectionLocker enter(node->size_cs);
-		str << size_state_name(node->size.state);
-		str << ",\n  Size: " << wxFileName::GetHumanReadableSize(node->size.val);
-	}
+	str << ",\n  Size State: " << size_state_name(node->size.state);
+	str << ",\n  Size: " << wxFileName::GetHumanReadableSize(node->size.val);
 	str << ",\n  Parent Name: ";
 	if (node->parent == null)
 		str << "NULL";
 	else
 		str << node->parent->name;
+
 	str << ",\n  Children names: ";
+	if (node->children.size() == 0)
+		str << "NULL";
+	else
 	{
-		wxCriticalSectionLocker enter(node->children_cs);
-		if (node->children.size() == 0)
-			str << "NULL";
-		else
+		// actually has children
+		for (auto child : node->children)
 		{
-			// actually has children
-			for (auto child : node->children)
-			{
-				str << "\n    " << child->name;
-			}
+			str << "\n    " << child->name;
 		}
 	}
+	
 	return str;
 }
 
-class fs_thread : public wxThread
+struct fs_thread : public wxThread
 {
-public:
 
 	fs_node* node;
 	vector<fs_thread*>* threads;
@@ -418,7 +427,11 @@ public:
 		if (TestDestroy()) 
 			return (wxThread::ExitCode)-1;
 		
-		wxString node_path = node->get_path();
+		wxString node_path;
+		{
+			wxCriticalSectionLocker enter(node->lock);
+			 node_path = node->get_path();
+		}
 		if (TestDestroy()) 
 			return (wxThread::ExitCode)-1;
 		
@@ -442,7 +455,7 @@ public:
 
 		{
 			// set the new size
-			wxCriticalSectionLocker enter(node->size_cs);
+			locker enter(node->lock);
 			node->size.val = size.val;
 			if (size.state == node_size_state::unable_to_access_all_files)
 				node->size.state = size.state;
@@ -479,7 +492,7 @@ public:
 };
 
 
-class fs_model : public wxDataViewModel
+struct fs_model : public wxDataViewModel
 {
 public:
 
@@ -506,13 +519,17 @@ public:
 	{
 		wxDataViewItemArray updated_items;
 		wxDataViewItemArray deleted_items;
-		node->refresh(updated_items, deleted_items);
+		{
+			wxCriticalSectionLocker enter(node->lock);
+			node->refresh(updated_items, deleted_items);
+		}
 		if(deleted_items.Count() != 0)
 			this->ItemsDeleted(wxDataViewItem(node), deleted_items);
 		//if(updated_items.Count() != 0)
 		//	this->ItemsChanged(updated_items);
 
-		// @hack this ugly hack is to...
+		// @hack this ugly hack is to fix the issue with updated items not getting their
+		//	container status updated
 		this->ItemDeleted((wxDataViewItem)node->parent, (wxDataViewItem)node);
 		this->ItemAdded((wxDataViewItem)node->parent, (wxDataViewItem)node);
 	}
@@ -586,11 +603,10 @@ public:
 		//   and before we run the thread, so that we won't have to
 		//   possibly race with the thread to set the state
 		{
-			wxCriticalSectionLocker enter(node->size_cs);
+			wxCriticalSectionLocker enter(node->lock);
 			node->size.state = node_size_state::processing;
 		}
-		ValueChanged(wxDataViewItem(node), fs_column::raw_size);
-		ValueChanged(wxDataViewItem(node), fs_column::readable_size);
+		ItemChanged(wxDataViewItem(node));
 
 		if (thread->Run() != wxTHREAD_NO_ERROR)
 		{
@@ -658,6 +674,7 @@ public:
 		fs_node* node = null;
 		for (fs_node* root : roots)
 		{
+			wxCriticalSectionLocker enter(root->lock);
 			if (root->name.IsSameAs(volume, !case_sensitive))
 			{
 				node = root;
@@ -670,16 +687,19 @@ public:
 			return null;
 		}
 
+		locker enter(node->lock);
 		auto dirs = path_name.GetDirs();
 		int num_dirs = dirs.GetCount();
+
+		// @robustness: this may be vulnerable to node deletion
 		for (int dir_i = 0; dir_i < num_dirs; dir_i++)
 		{
-			wxCriticalSectionLocker enter(node->children_cs);
 			bool child_found = false;
 			int num_children = node->children.size();
 			for (int child_i = 0; child_i < num_children && !child_found; child_i++)
 			{
 				auto child = node->children[child_i];
+				locker child_enter(child->lock);
 				if (child->name.IsSameAs(dirs[dir_i], !case_sensitive))
 				{
 					node = child;
@@ -695,11 +715,11 @@ public:
 		{
 			auto name = path_name.GetFullName();
 			bool found = false;
-			wxCriticalSectionLocker enter(node->children_cs);
 			int num_children = node->children.size();
 			for (int i = 0; i < num_children; i++)
 			{
 				auto child = node->children[i];
+				locker child_enter(child->lock);
 				if (child->name.IsSameAs(name, false))
 				{
 					found = true;
@@ -798,6 +818,9 @@ public:
 	{
 		assert(item.IsOk());
 		fs_node* node = (fs_node*)item.GetID();
+		if (node == null)
+			return;
+		locker enter(node->lock);
 
 		switch (col)
 		{
@@ -813,7 +836,6 @@ public:
 
 		case fs_column::readable_size:
 		{
-			wxCriticalSectionLocker enter(node->size_cs);
 			switch (node->size.state)
 			{
 			case node_size_state::processing:
@@ -849,7 +871,6 @@ public:
 		{
 			wxULongLong val = 0;
 			{
-				wxCriticalSectionLocker enter(node->size_cs);
 				val = node->size.val;
 			}
 			if (val == wxInvalidSize)
@@ -876,6 +897,9 @@ public:
 		//con << "SetValue() col: " << col << endl;
 		assert(item.IsOk());
 		fs_node* node = (fs_node*)item.GetID();
+		if (node == null)
+			return false;
+		locker enter(node->lock);
 		if (col == 0)
 		{
 			node->name = variant.GetString();
@@ -906,6 +930,9 @@ public:
 			return wxDataViewItem(0);
 
 		fs_node* node = (fs_node*)item.GetID();
+		if (node == null)
+			return wxDataViewItem(null);
+		locker enter(node->lock);
 		return wxDataViewItem((void*)node->parent);
 	}
 
@@ -915,10 +942,7 @@ public:
 		if (!node)
 			return true;
 
-		// @todo:	launch a thread here to traverse the directory; 
-		//			return false in the meantime
-		//			and queue an event once the thread has finished, indicating that the app needs to
-		//				recheck the values of this item (which should trigger this function again)
+		locker enter(node->lock);
 		return node->type == Node_Type::normal_directory;
 	}
 
@@ -931,7 +955,7 @@ public:
 				children.Add(wxDataViewItem((void*)root));
 			return roots.size();
 		}
-		
+		locker enter(node->lock);
 		size_t num_children = node->children.size();
 		for (size_t i = 0; i < num_children; i++)
 		{
@@ -948,6 +972,12 @@ public:
 		assert(item1.IsOk() && item2.IsOk());
 		fs_node* node1 = (fs_node*)item1.GetID();
 		fs_node* node2 = (fs_node*)item2.GetID();
+
+		if (node1 == null || node2 == null)
+			return 0;
+
+		locker enter1(node1->lock);
+		locker enter2(node2->lock);
 
 		if(column == 0) // name
 		{
