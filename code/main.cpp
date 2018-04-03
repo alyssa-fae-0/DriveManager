@@ -70,30 +70,25 @@ App_Settings Settings;
 //#define test_are_equal(a,b)
 
 // As before, define a new wxEventType
-wxDEFINE_EVENT(App_Event_Type, App_Event);
+wxDEFINE_EVENT(App_event_type, App_event);
 
 
 void run_tests()
 {
 	// node_type tests
 	{
-		assert(get_node_type("C:\\") == Node_Type::normal_directory);
-		assert(get_node_type("C:") == Node_Type::normal_directory);
-		assert(get_node_type("C") == Node_Type::not_exist);
+		assert(get_node_type("C:\\") == Node_type::normal_directory);
+		assert(get_node_type("C:") == Node_type::normal_directory);
+		assert(get_node_type("C") == Node_type::not_exist);
 
-		// @BUG: these should be correct... @TODO: look into why I can call function
-		//	@	 on "C:\\" but not "D:\\"
-		//assert(get_node_type("D:\\") == Node_Type::nt_normal_directory);
-		//assert(get_node_type("D:") == Node_Type::nt_normal_directory);
-		//assert(get_node_type("D") == Node_Type::nt_not_exist);
+		assert(get_node_type("D:\\") == Node_type::normal_directory);
+		assert(get_node_type("D:") == Node_type::normal_directory);
+		assert(get_node_type("D") == Node_type::not_exist);
 	}
 
 	{
 		bool accessible = dir_is_inaccessible("C:\\dev\\");
 	}
-
-
-
 
 	// get_name test
 	{
@@ -118,6 +113,7 @@ enum struct id : int
 	scroll_button,
 	thread_count_timer_id,
 	get_num_active_threads,
+	relocate_restore_button,
 	num_ids
 };
 
@@ -138,21 +134,20 @@ void init_IDs()
 }
 
 wxTextCtrl* text_console = null;
-ostream* Console = null;
+ostream* console = null;
 wxCriticalSection con_cs;
-wxObjectDataPtr<fs_model> Model;
-vector<fs_node*> nodes_to_calc_size;
+deque<Fs_node*> nodes_to_calc_size;
 wxCriticalSection nodes_to_calc_size_cs;
-vector<fs_node*> recycled_nodes;
+vector<Fs_node*> recycled_nodes;
 wxCriticalSection recycled_nodes_cs;
 
 
-class MyFrame : public wxFrame
+class Drive_manager_frame : public wxFrame
 {
 
 public:
 
-	MyFrame(const wxString& title, const wxPoint& pos, const wxSize& size)
+	Drive_manager_frame(const wxString& title, const wxPoint& pos, const wxSize& size)
 		: wxFrame(NULL, wxID_ANY, title, pos, size)
 	{
 		data_view = null;
@@ -163,18 +158,17 @@ public:
 		//set_IDs();
 		text_console = new wxTextCtrl(this, get_id(id::console_id), "Console Log:\n", wxDefaultPosition, wxDefaultSize, wxTE_MULTILINE | wxTE_READONLY | wxTE_BESTWRAP);
 		text_console->SetMaxSize(wxSize(-1, 150));
-		Console = new std::ostream(text_console);
+		console = new std::ostream(text_console);
 
 		run_tests();
 
 
-		Bind(wxEVT_CLOSE_WINDOW, &MyFrame::OnClose, this);
-		Bind(wxEVT_MENU, &MyFrame::OnExit, this, wxID_EXIT);
-		Bind(wxEVT_MENU, &MyFrame::OnAbout, this, wxID_ABOUT);
-		Bind(wxEVT_MENU, &MyFrame::OnHello, this, get_id(id::hello));
-		Bind(wxEVT_MENU, &MyFrame::OnDirPicker, this, get_id(id::open_dir_picker));
-		Bind(wxEVT_DIRPICKER_CHANGED, &MyFrame::OnDirPickerChanged, this, get_id(id::relocate_dir_picker));
-		Bind(wxEVT_BUTTON, &MyFrame::on_test_button, this, get_id(id::test_button));
+		Bind(wxEVT_CLOSE_WINDOW, &Drive_manager_frame::OnClose, this);
+		Bind(wxEVT_MENU, &Drive_manager_frame::OnExit, this, wxID_EXIT);
+		Bind(wxEVT_MENU, &Drive_manager_frame::OnAbout, this, wxID_ABOUT);
+		Bind(wxEVT_MENU, &Drive_manager_frame::OnHello, this, get_id(id::hello));
+		Bind(wxEVT_MENU, &Drive_manager_frame::OnDirPicker, this, get_id(id::open_dir_picker));
+		Bind(wxEVT_DIRPICKER_CHANGED, &Drive_manager_frame::OnDirPickerChanged, this, get_id(id::relocate_dir_picker));
 		//Bind(wxEVT_BUTTON, &MyFrame::on_scroll_button, this, ID.scroll_button);
 
 
@@ -209,7 +203,12 @@ public:
 		settings_sizer->AddSpacer(10);
 
 		settings_sizer->Add(
-			new wxDirPickerCtrl(this, get_id(id::relocate_dir_picker), Settings.backup_dir.GetFullPath(), wxDirSelectorPromptStr, wxDefaultPosition, wxDefaultSize, wxDIRP_USE_TEXTCTRL),
+			new wxDirPickerCtrl(this, get_id(id::relocate_dir_picker), 
+				Settings.backup_dir.GetFullPath(), 
+				wxDirSelectorPromptStr, 
+				wxDefaultPosition, 
+				wxDefaultSize, 
+				wxDIRP_USE_TEXTCTRL),
 			1, wxEXPAND, 0);
 
 		//settings_sizer->SetSizeHints(this);
@@ -221,25 +220,24 @@ public:
 
 			// Navigation View
 			data_view = new wxDataViewCtrl(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxDV_ROW_LINES);
-			model = new fs_model(this, "C:\\dev");
+			model = new Fs_model(this, "C:\\dev");
 			//model = new fs_model(Settings.test_data_source.GetFullPath());
-			Model = model;
 			data_view->AssociateModel(model.get());
 
 			auto text_renderer = new wxDataViewTextRenderer("string", wxDATAVIEW_CELL_INERT);
-			wxDataViewColumn* col0 = new wxDataViewColumn("Path", text_renderer, fs_column::name, 350,
+			wxDataViewColumn* col0 = new wxDataViewColumn("Path", text_renderer, Fs_column::name, 350,
 				wxALIGN_LEFT, wxDATAVIEW_COL_SORTABLE | wxDATAVIEW_COL_RESIZABLE);
 			data_view->AppendColumn(col0);
 
 			col0->SetSortOrder(true);
 
 			text_renderer = new wxDataViewTextRenderer("string", wxDATAVIEW_CELL_INERT);
-			wxDataViewColumn* col1 = new wxDataViewColumn("Node Type", text_renderer, fs_column::type, 170,
+			wxDataViewColumn* col1 = new wxDataViewColumn("Node Type", text_renderer, Fs_column::type, 170,
 				wxALIGN_LEFT, wxDATAVIEW_COL_SORTABLE | wxDATAVIEW_COL_RESIZABLE);
 			data_view->AppendColumn(col1);
 
 			text_renderer = new wxDataViewTextRenderer("string", wxDATAVIEW_CELL_INERT);
-			wxDataViewColumn* col2 = new wxDataViewColumn("Size", text_renderer, fs_column::readable_size, 120,
+			wxDataViewColumn* col2 = new wxDataViewColumn("Size", text_renderer, Fs_column::readable_size, 120,
 				wxALIGN_LEFT, wxDATAVIEW_COL_SORTABLE | wxDATAVIEW_COL_RESIZABLE);
 			data_view->AppendColumn(col2);
 
@@ -258,44 +256,38 @@ public:
 			data_view->SetIndent(10);
 		}
 
-		Bind(wxEVT_DATAVIEW_ITEM_EXPANDING, &MyFrame::on_data_view_item_expanding, this);
-		Bind(wxEVT_DATAVIEW_ITEM_ACTIVATED, &MyFrame::on_model_item_double_clicked, this);
+		Bind(wxEVT_DATAVIEW_ITEM_EXPANDING, &Drive_manager_frame::on_data_view_item_expanding, this);
+		Bind(wxEVT_DATAVIEW_ITEM_ACTIVATED, &Drive_manager_frame::on_model_item_double_clicked, this);
 		//Bind(wxEVT_DATAVIEW_COLUMN_SORTED, &MyFrame::on_model_resort, this);
 
-		Bind(App_Event_Type, &MyFrame::on_nodes_added_to_model, this, (int)App_Event_IDs::nodes_added);
-		Bind(App_Event_Type, &MyFrame::on_node_size_calc_failed, this, (int)App_Event_IDs::thread_node_size_calc_failed);
-		Bind(App_Event_Type, &MyFrame::on_node_size_calc_finished, this, (int)App_Event_IDs::thread_node_size_calc_finished);
+		Bind(App_event_type, &Drive_manager_frame::on_nodes_added_to_model, this, (int)App_event_id::nodes_added);
+		Bind(App_event_type, &Drive_manager_frame::on_node_size_calc_failed, this, (int)App_event_id::thread_node_size_calc_failed);
+		Bind(App_event_type, &Drive_manager_frame::on_node_size_calc_finished, this, (int)App_event_id::thread_node_size_calc_finished);
 
 		timer = new wxTimer(this, get_id(id::thread_count_timer_id));
-		Bind(wxEVT_TIMER, &MyFrame::on_thread_count_timer, this);
+		Bind(wxEVT_TIMER, &Drive_manager_frame::on_thread_count_timer, this);
 
-		//Bind(wxEVT_MENU, &MyFrame::OnDirPicker, this, ID.open_dir_picker);
-		//Bind(wxEVT_DIRPICKER_CHANGED, &MyFrame::OnDirPickerChanged, this, ID.relocate_dir_picker);
-		//Bind(wxEVT_BUTTON, &MyFrame::on_test_button, this, ID.test_button);
 
-		if (false) // directory browser -- buggy with symlinks
+		// Row of Misc Buttons
 		{
-			auto dir = new wxGenericDirCtrl(this, -1, wxDirDialogDefaultFolderStr, wxDefaultPosition, wxDefaultSize, wxDIRCTRL_MULTIPLE, "*.*");
-			dir->ShowHidden(true);
-			dir->SetDefaultPath("c:\\api\\wx\\lib\\vc141_dll\\");
-			dir->ExpandPath(dir->GetDefaultPath());
-			window_sizer->Add(dir, 1, wxEXPAND, 0);
-		}
+			auto button_row = new wxBoxSizer(wxHORIZONTAL);
+			button_row->Add(new wxButton(this, get_id(id::test_button), "Run Test"), 1, wxEXPAND, 0);
+			Bind(wxEVT_BUTTON, &Drive_manager_frame::on_test_button, this, get_id(id::test_button));
 
-		// Misc utilities
-		window_sizer->Add(new wxButton(this, get_id(id::test_button), "Run Test"), 0, wxEXPAND, 0);
+			button_row->Add(new wxButton(this, get_id(id::relocate_restore_button), "Relocate/Restore"), 1, wxEXPAND, 0);
+			Bind(wxEVT_BUTTON, &Drive_manager_frame::on_relocate_restore_button, this, get_id(id::relocate_restore_button));
+			window_sizer->Add(button_row);
+		}
 		window_sizer->Add(text_console, 1, wxEXPAND, 0);
 		con << endl;
 
 		SetSizerAndFit(window_sizer);
 		timer->Start(time_between_thread_counts); // milliseconds
-
-		//Bind(wxEVT_SIZE, &MyFrame::on_window_resized, this);
 	}
 
 	wxTimer* timer;
 	wxDataViewCtrl* data_view;
-	wxObjectDataPtr<fs_model> model;
+	wxObjectDataPtr<Fs_model> model;
 	const int time_between_thread_counts = 500; // miliseconds
 
 	void sort_ctrl(wxDataViewColumn* column, bool ascending)
@@ -332,40 +324,38 @@ public:
 		this->SetStatusText(wxString("Active Threads: ") << model->get_num_active_threads());
 	}
 
-	void on_node_size_calc_finished(App_Event& event)
+	void on_node_size_calc_finished(App_event& event)
 	{
-		assert(event.GetId() == (int)App_Event_IDs::thread_node_size_calc_finished);
-		fs_node* node = event.node;
+		assert(event.GetId() == (int)App_event_id::thread_node_size_calc_finished);
+		Fs_node* node = event.node;
 		//con << "Recalculated size for: " << node->get_path() << endl;
 		//{
 			//wxCriticalSectionLocker enter(node->size_cs);
 			//con << "  New size: " << wxFileName::GetHumanReadableSize(node->size.val) << endl;
 		//}
 		model->ValueChanged(wxDataViewItem(node), 2);
-		wxQueueEvent(this, new App_Event(App_Event_IDs::nodes_added));
+		wxQueueEvent(this, new App_event(App_event_id::nodes_added));
 	}
 
-	void on_node_size_calc_failed(App_Event& event)
+	void on_node_size_calc_failed(App_event& event)
 	{
-		assert(event.GetId() == (int)App_Event_IDs::thread_node_size_calc_failed);
-		fs_node* node = event.node;
+		assert(event.GetId() == (int)App_event_id::thread_node_size_calc_failed);
+		Fs_node* node = event.node;
 		con << "Failed to calculate size for: " << node->get_path() << endl;
-		wxQueueEvent(this, new App_Event(App_Event_IDs::nodes_added));
+		wxQueueEvent(this, new App_event(App_event_id::nodes_added));
 	}
 
-	void on_nodes_added_to_model(App_Event& event)
+	void on_nodes_added_to_model(App_event& event)
 	{
-		assert(event.GetId() == (int)App_Event_IDs::nodes_added);
-
+		assert(event.GetId() == (int)App_event_id::nodes_added);
 		{
 			wxCriticalSectionLocker enter(nodes_to_calc_size_cs);
-			for(int i = nodes_to_calc_size.size() - 1; i >= 0; i--)
+			while (!nodes_to_calc_size.empty())
 			{
-				fs_node* node = nodes_to_calc_size.at(i);
-				if (model->spawn_thread(node))
-					nodes_to_calc_size.pop_back();
-				else
+				Fs_node* node = nodes_to_calc_size.front();
+				if (!model->spawn_thread(node))
 					break;
+				nodes_to_calc_size.pop_front();
 			}
 		}
 	}
@@ -375,7 +365,7 @@ public:
 		con << endl;
 		auto item = event.GetItem();
 		assert(item.IsOk());
-		fs_node* node = (fs_node*)item.GetID();
+		Fs_node* node = (Fs_node*)item.GetID();
 		con << to_string(node) << endl;
 		//con << "pre" << endl;
 		//model->refresh(node);
@@ -385,23 +375,39 @@ public:
 		//con << endl << endl;
 	}
 
+	void on_relocate_restore_button(wxCommandEvent& event)
+	{
+		auto selection = data_view->GetSelection();
+		assert(selection.IsOk());
+		Fs_node* node = (Fs_node*)selection.GetID();
+		assert(node != null);
+		locker enter(node->lock);
+		Result result;
+		if (node->type == Node_type::normal_directory || node->type == Node_type::normal_file)
+			result = model->relocate_node(node);
+		else if (node->type == Node_type::symlink_directory || node->type == Node_type::symlink_file)
+			result = model->restore_node(node);
+		if (!result.success)
+			con << result.info << endl;
+	}
+
 	void on_test_button(wxCommandEvent& event)
 	{
 		{
 			wxString file_path = "C:\\dev\\test_data\\test_a.txt";
-			fs_node* file_node = model->get_node(file_path);
+			Fs_node* file_node = model->get_node(file_path);
 			//con << file_path << ": " << to_string(file_node) << endl << endl;
 		}
 
 		
 		{
 			wxString dir_path = "C:\\dev\\test_data\\";
-			fs_node* dir_node = model->get_node(dir_path);
+			Fs_node* dir_node = model->get_node(dir_path);
 			//con << dir_path << ": " << to_string(dir_node) << endl << endl;
 
 			if (dir_node != null)
 			{
-				if (dir_node->type == Node_Type::normal_directory)
+				if (dir_node->type == Node_type::normal_directory)
 				{
 					if (relocate(dir_path))
 					{
@@ -413,7 +419,7 @@ public:
 					else
 						con << "Failed to relocate: " << dir_path << endl;
 				}
-				else if (dir_node->type == Node_Type::symlink_directory)
+				else if (dir_node->type == Node_type::symlink_directory)
 				{
 					if (restore(dir_path))
 					{
@@ -444,11 +450,11 @@ public:
 	{
 		auto item = event.GetItem();
 		assert(item.IsOk());
-		auto node = (fs_node*)event.GetItem().GetID();
+		auto node = (Fs_node*)event.GetItem().GetID();
 		if (node == null)
 			return;
 		locker enter(node->lock);
-		if (node->type != Node_Type::normal_directory || dir_is_inaccessible(node->get_path()))
+		if (node->type != Node_type::normal_directory || dir_is_inaccessible(node->get_path()))
 		{
 			event.Veto();
 			return;
@@ -462,11 +468,11 @@ public:
 			//con << path << " has " << node->children.size() << " children" << endl;
 		//}
 
-		App_Event* app_event = new App_Event(App_Event_IDs::nodes_added);
+		App_event* app_event = new App_event(App_event_id::nodes_added);
 		//app_event->SetEventObject(this);
 		wxQueueEvent(this, app_event);
 
-		//wxQueueEvent(this, new wxCommandEvent(APP_EVENT_TYPE, (int)App_Event_IDs::nodes_added));
+		//wxQueueEvent(this, new wxCommandEvent(APP_EVENT_TYPE, (int)App_event_IDs::nodes_added));
 	}
 
 	void OnDirPicker(wxCommandEvent& event)
@@ -492,7 +498,7 @@ public:
 		// otherwise, the target exists
 		auto node_type = get_node_type(data);
 
-		if (node_type == Node_Type::normal_directory)
+		if (node_type == Node_type::normal_directory)
 		{
 			// target is a normal directory;
 			// update the settings
@@ -547,7 +553,7 @@ public:
 	{
 		if (!wxApp::OnInit())
 			return false;
-		MyFrame *frame = new MyFrame("hello World", wxDefaultPosition, wxSize(450, 340));
+		Drive_manager_frame *frame = new Drive_manager_frame("hello World", wxDefaultPosition, wxSize(450, 340));
 		frame->Show(true);
 		return true;
 	}

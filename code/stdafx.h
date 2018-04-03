@@ -17,6 +17,7 @@
 #include <shellapi.h>
 #include <string>
 #include <vector>
+#include <deque>
 
 
 #include <wx\wx.h>
@@ -34,6 +35,7 @@ using std::string;
 using std::wstring;
 using std::ostream;
 using std::vector;
+using std::deque;
 using std::cin;
 using std::cout;
 using std::cerr;

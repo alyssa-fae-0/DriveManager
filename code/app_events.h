@@ -2,7 +2,7 @@
 #include "stdafx.h"
 #include "console.h"
 
-enum struct App_Event_IDs  : int
+enum struct App_event_id  : int
 {
 	nodes_added,
 	thread_node_size_calc_finished,
@@ -10,25 +10,25 @@ enum struct App_Event_IDs  : int
 	num_active_threads_update
 };
 
-struct fs_node;
+struct Fs_node;
 
-class App_Event;
-wxDECLARE_EVENT(App_Event_Type, App_Event);
+class App_event;
+wxDECLARE_EVENT(App_event_type, App_event);
 
-class App_Event : public wxCommandEvent
+class App_event : public wxCommandEvent
 {
 public:
-	fs_node* node;
+	Fs_node* node;
 
-	App_Event(App_Event_IDs id)
-		: wxCommandEvent(App_Event_Type, (int)id)
+	App_event(App_event_id id)
+		: wxCommandEvent(App_event_type, (int)id)
 	{
 		//con << "Event created: " << endl << "  Event type: " << commandType << endl << "  id: " << id << endl;
 		node = null;
 	}
 
 	// You *must* copy here the data to be transported
-	App_Event(const App_Event& event)
+	App_event(const App_event& event)
 		: wxCommandEvent(event) 
 	{
 		//con << "Event copy: " << endl << "  Event type: " << this->GetEventType() << endl << "  id: " << event.GetId() << endl;
@@ -36,7 +36,7 @@ public:
 	}
 
 	// Required for sending with wxPostEvent()
-	wxEvent* Clone() const { return new App_Event(*this); }	
+	wxEvent* Clone() const { return new App_event(*this); }	
 };
 
 #define App_Event_Handler(func) (&func)

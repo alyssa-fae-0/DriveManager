@@ -12,6 +12,20 @@
 #define s32 uint32_t
 #define s64 uint64_t
 
+struct Result
+{
+	bool success;
+	wxString info;
+};
+
+//template <typename T>
+//struct Locked {
+//	wxCriticalSection lock;
+//	T data;
+//
+//	T() { return data };
+//};
+
 
 //#define fae_debug
 #ifdef fae_debug
