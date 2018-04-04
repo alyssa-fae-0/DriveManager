@@ -157,7 +157,6 @@
     <ClInclude Include="code\fae_string.h" />
     <ClInclude Include="code\misc.h" />
     <ClInclude Include="code\new_filesystem.h" />
-    <ClInclude Include="code\queue_display.h" />
     <ClInclude Include="code\settings.h" />
     <ClInclude Include="code\stdafx.h" />
   </ItemGroup>

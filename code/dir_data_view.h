@@ -489,20 +489,10 @@ struct Fs_thread : public wxThread
 	}
 };
 
-enum struct Node_operation_type : int
-{
-	restore,
-	relocate
-};
-
-struct Node_operation
-{
-	Fs_node* node;
-	Node_operation_type type;
-};
 
 struct Fs_model : public wxDataViewModel
 {
+public:
 
 	// @TODO this should probably have a critical section as well
 	vector<Fs_node*> roots;
@@ -521,28 +511,7 @@ struct Fs_model : public wxDataViewModel
 	wxCriticalSection threads_cs;
 	int max_threads;
 
-	queue<Node_operation> queued_ops;
-
-
 	wxWindow* window;
-
-	void queue_node(Fs_node* node)
-	{
-		assert(node != null);
-		Node_operation op;
-		op.node = node;
-
-		{
-			locker enter(node->lock);
-			if (is_symlink(node->type))
-				op.type = Node_operation_type::restore;
-			else if (is_normal(node->type))
-				op.type = Node_operation_type::relocate;
-			else
-				assert(false);
-		}
-		queued_ops.push(op);
-	}
 
 	void refresh(Fs_node* node)
 	{
@@ -703,23 +672,6 @@ struct Fs_model : public wxDataViewModel
 		return true;
 	}
 
-	void jump_node_to_front_of_update_queue(Fs_node* node)
-	{
-		locker enter(nodes_to_calc_size_cs);
-		// @TODO: this is an ugly mess. Fix this
-		for (auto iter = nodes_to_calc_size.begin(); iter < nodes_to_calc_size.end(); ++iter)
-		{
-			if (*iter == node)
-			{
-				nodes_to_calc_size.erase(iter);
-
-				// reset the iterator so we can remove any duplicate entries
-				iter = nodes_to_calc_size.begin(); 
-			}
-		}
-		nodes_to_calc_size.push_front(node);
-	}
-
 
 	Result relocate_node(Fs_node* node)
 	{
@@ -738,15 +690,12 @@ struct Fs_model : public wxDataViewModel
 			node_type != Node_type::normal_file)
 			return {false, wxString("Node is ") << to_string(node_type) << " which cannot be relocated."};
 		if (!is_size_valid(node_size))
-		{
-			jump_node_to_front_of_update_queue(node);
 			return { false, wxString("Node's size couldn't be calculated. Size_State: ") << to_string(node_size.state) };
-		}
 
 		auto bak_dir_path = Settings.backup_dir.GetFullPath();
 		if (!wxFileName::DirExists(bak_dir_path))
 			if (!create_dir_recursively(bak_dir_path))
-				return {false, wxString("No backup directory found, and couldn't be created. Backup dir: ") << bak_dir_path};
+				return {false, wxString("No backup directory found. Backup dir: ") << bak_dir_path};
 
 		auto bak_drive_space = get_drive_space(bak_dir_path);
 
@@ -755,51 +704,10 @@ struct Fs_model : public wxDataViewModel
 			<< wxFileName::GetHumanReadableSize(bak_drive_space) << ", Node Size: "
 			<< wxFileName::GetHumanReadableSize(node_size.val) };
 
-		// create the full target name
-		wxString dest = bak_dir_path;
-		wxString node_name = get_name(node_path);
-
+		bool success = relocate(node_path);
+		if (!success)
+			return { false, wxString("Error from internal relocate(); error code: ") << GetLastError() };
 		
-		if (!wxFileName::IsPathSeparator(dest.Last()))
-			dest.append(wxFileName::GetPathSeparator());
-		dest.append(node_name);
-		remove_trailing_slash(dest);
-
-		wxString src = node_path;
-		remove_trailing_slash(src);
-
-		con << "Source: " << node_path << endl;
-		con << "Target: " << dest << endl;
-
-		// make sure that we're not trying to backup anything up into the backup dir directly
-		// we don't want to delete the backup_dir!!!
-		if (Settings.backup_dir.SameAs(wxFileName(dest)))
-			return { false, wxString() << "Error: dest: " << dest << " is same location as backup directory" << Settings.backup_dir.GetFullPath() };
-
-		// there shouldn't be anything in the destination
-		if(get_node_type(dest) != Node_type::not_exist)
-			return { false, wxString() << "Error: dest: " << dest << " is already occupied." };
-		
-		// src (c:\dev\test_data) has the data, and dst (d:\bak\test_data) is empty
-		// copy src to dst
-		if (!copy_recursive(src, dest))
-			return { false, wxString() << "Error: failed to copy " << src << " to " << dest };
-
-		// src (c:\dev\test_data) and dst (d:\bak\test_data) now have full copies of the data
-		// delete src's copy
-		if (!delete_target(src))
-			return { false, wxString() << "Error: failed to delete " << src };
-		
-
-		// src (c:\dev\test_data) is empty and dst (d:\bak\test_data) now has the data
-		// create a symlink in src that points to dst
-		if (!create_symlink(src, dest))
-			return { false, wxString() << "Error: failed to create symlink from " << src << " to " << dest };
-		
-
-		// src (c:\dev\test_data) contains a symlink to dst (d:\bak\test_data) which has the data
-		// and we're done!
-
 		refresh(node);
 		ItemChanged((wxDataViewItem)node);
 		return { true, "" };
@@ -840,26 +748,9 @@ struct Fs_model : public wxDataViewModel
 			<< wxFileName::GetHumanReadableSize(node_drive_space) << ", Target Size: "
 			<< wxFileName::GetHumanReadableSize(target_size) };
 
-		wxString src = node_path;
-		remove_trailing_slash(src);
-
-		wxString target = target_path;
-		remove_trailing_slash(target);
-
-		// source (c:\dev\test_data -> d:\bak\test_data)
-		// delete symlink
-		if (!delete_target(src))
-			return { false, wxString() << "Error: Failed to delete node: " << src };
-
-		// copy data from target back to source
-		if (!copy_recursive(target, src))
-			return { false, wxString() << "Failed to copy: " << target << " to " << src };
-		
-		// delete target's copy
-		if (!delete_target(target))
-			return { false, wxString() << "Failed to delete: " << target };
-
-		// and we're done
+		bool success = restore(node_path);
+		if (!success)
+			return { false, wxString("Error from internal relocate(); error code: ") << GetLastError() };
 
 		refresh(node);
 		ItemChanged((wxDataViewItem)node);

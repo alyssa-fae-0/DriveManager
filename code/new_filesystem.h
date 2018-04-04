@@ -39,16 +39,6 @@ bool exists(Node_type type)
 	return type > Node_type::not_exist && type < Node_type::num_types;
 }
 
-bool is_normal(Node_type type)
-{
-	return type == Node_type::normal_directory || type == Node_type::normal_file;
-}
-
-bool is_symlink(Node_type type)
-{
-	return type == Node_type::symlink_directory || type == Node_type::symlink_file;
-}
-
 Node_type get_node_type(WIN32_FIND_DATA &data)
 {
 	if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
