@@ -50,5 +50,8 @@
     <ClInclude Include="code\app_events.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="code\queue_display.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

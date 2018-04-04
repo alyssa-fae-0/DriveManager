@@ -9,15 +9,31 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <string>
-#include <iostream>
-#include <locale>
-#include <ostream>
 #include <locale>
 #include <shellapi.h>
+
+#include <iostream>
+using std::cin;
+using std::cout;
+using std::cerr;
+using std::endl;
+
+#include <ostream>
+using std::ostream;
+
+
 #include <string>
+using std::wstring;
+using std::string;
+
 #include <vector>
+using std::vector;
+
 #include <deque>
+using std::deque;
+
+#include <queue>
+using std::queue;
 
 
 #include <wx\wx.h>
@@ -30,14 +46,5 @@
 #include <wx\filename.h>
 #include <wx\notifmsg.h>
 #include <wx\dir.h>
-
-using std::string;
-using std::wstring;
-using std::ostream;
-using std::vector;
-using std::deque;
-using std::cin;
-using std::cout;
-using std::cerr;
-using std::endl;
+#include <wx\addremovectrl.h>
 #pragma warning (pop)
