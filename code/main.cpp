@@ -5,6 +5,7 @@
 #include "new_filesystem.h"
 #include "dir_data_view.h"
 #include "app_events.h"
+#include "queue_display.h"
 
 /*
 
@@ -114,6 +115,8 @@ enum struct id : int
 	thread_count_timer_id,
 	get_num_active_threads,
 	relocate_restore_button,
+	queue_node,
+	queue_display,
 	num_ids
 };
 
@@ -276,10 +279,53 @@ public:
 
 			button_row->Add(new wxButton(this, get_id(id::relocate_restore_button), "Relocate/Restore"), 1, wxEXPAND, 0);
 			Bind(wxEVT_BUTTON, &Drive_manager_frame::on_relocate_restore_button, this, get_id(id::relocate_restore_button));
+
+			button_row->Add(new wxButton(this, get_id(id::queue_node), "Queue Node"), 1, wxEXPAND, 0);
+			//Bind(wxEVT_BUTTON, &Drive_manager_frame::on_queue_node, this, get_id(id::queue_node));
+
 			window_sizer->Add(button_row);
 		}
-		window_sizer->Add(text_console, 1, wxEXPAND, 0);
-		con << endl;
+
+		// console and queue
+		{
+			auto con_row_sizer = new wxBoxSizer(wxHORIZONTAL);
+
+			con_row_sizer->Add(text_console, 1, wxEXPAND, 0);
+			con << endl;
+
+
+			//auto queue_display = new Queue_display(this, get_id(id::queue_display));
+			{
+				auto list_box = new wxListBox(this, get_id(id::queue_display));
+				
+
+				for (int i = 0; i < 7; i++)
+				{
+					wxString text;
+					text << "Item " << i;
+					list_box->Insert(text, i);
+				}
+				
+				Bind(wxEVT_BUTTON, [](wxCommandEvent& e) {
+					con << "Node Queued" << endl;
+				}, get_id(id::queue_node));
+
+				//auto ctrl = new wxAddRemoveCtrl(this);
+				//auto adaptor = new Queue_display_adaptor(list_box);
+				//ctrl->SetAdaptor(adaptor);
+				//auto children = GetChildren();
+				//for (size_t i = 0; i < children.size(); i++)
+				//{
+				//	auto child = children[i];
+				//	con << "List child: " << child->GetName() << endl;
+				//}
+
+				con_row_sizer->Add(list_box, 1, wxEXPAND, 0);
+			}
+
+
+			window_sizer->Add(con_row_sizer, 0, wxEXPAND, 0);
+		}
 
 		SetSizerAndFit(window_sizer);
 		timer->Start(time_between_thread_counts); // milliseconds
@@ -289,6 +335,24 @@ public:
 	wxDataViewCtrl* data_view;
 	wxObjectDataPtr<Fs_model> model;
 	const int time_between_thread_counts = 500; // miliseconds
+
+	void on_queue_node(wxCommandEvent& event)
+	{
+		con << "Queue node" << endl;
+		wxDataViewItemArray items;
+		int num_selections = data_view->GetSelections(items);
+		if (num_selections > 0)
+		{
+			for (auto item : items)
+			{
+				assert(item.IsOk());
+				model->queue_node((Fs_node*)item.GetID());
+			}
+		}
+
+		con << "Num queued items: " << model->queued_ops.size() << endl;
+
+	}
 
 	void sort_ctrl(wxDataViewColumn* column, bool ascending)
 	{
