@@ -618,7 +618,7 @@ if (wxFileName::Exists(filename, wxFILE_EXISTS_SYMLINK))
 }
 */
 
-enum struct node_size_state : int
+enum struct Node_size_state : int
 {
 	waiting_processing,
 	processing,
@@ -626,17 +626,17 @@ enum struct node_size_state : int
 	processing_complete
 };
 
-wxString to_string(node_size_state state)
+wxString to_string(Node_size_state state)
 {
 	switch (state)
 	{
-	case node_size_state::waiting_processing:
+	case Node_size_state::waiting_processing:
 		return "'Waiting for Processing'";
-	case node_size_state::processing:
+	case Node_size_state::processing:
 		return "'Processing'";
-	case node_size_state::unable_to_access_all_files:
+	case Node_size_state::unable_to_access_all_files:
 		return "'Unable to Process All Files'";
-	case node_size_state::processing_complete:
+	case Node_size_state::processing_complete:
 		return "'Processing Complete'";
 	}
 	assert(false); // shouldn't get here
@@ -646,8 +646,8 @@ wxString to_string(node_size_state state)
 struct Node_size
 {
 	Node_size() {}
-	Node_size(node_size_state state, wxULongLong val) : state(state), val(val) {}
-	node_size_state state;
+	Node_size(Node_size_state state, wxULongLong val) : state(state), val(val) {}
+	Node_size_state state;
 	wxULongLong val;
 };
 
@@ -658,7 +658,7 @@ Node_size win_get_size(const wxString& path)
 
 	WIN32_FIND_DATA data;
 	HANDLE handle = FindFirstFile(path_w, &data);
-	Node_size size(node_size_state::unable_to_access_all_files, 0);
+	Node_size size(Node_size_state::unable_to_access_all_files, 0);
 
 	if (handle == INVALID_HANDLE_VALUE)
 	{
@@ -672,7 +672,7 @@ Node_size win_get_size(const wxString& path)
 	FindClose(handle);
 
 	size.val = val.QuadPart;
-	size.state = node_size_state::processing_complete;
+	size.state = Node_size_state::processing_complete;
 	return size;
 }
 

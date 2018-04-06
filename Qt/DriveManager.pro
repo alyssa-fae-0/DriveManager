@@ -22,35 +22,46 @@ DEFINES += QT_DEPRECATED_WARNINGS
 # You can also select to disable deprecated APIs only up to a certain version of Qt.
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
-ROOT = $$_PRO_FILE_PWD_/..
+PRECOMPILED_HEADER = external_includes.h
 
-INCLUDEPATH += $$ROOT/code/
+#INCLUDEPATH += $$_PRO_FILE_PWD/code/
 
 #DESTDIR = out/
 
 #OBJECTS_DIR = _PRO_FILE_PWD_/build/
 
-VPATH += $$ROOT/code/
+#VPATH += $$ROOT/code/
 
-SOURCES += \
-        qt_main.cpp \
-        qt_main_window.cpp \
-    ../code/main.cpp \
-    ../code/stdafx.cpp
+#LZZ = main_window.lzz
+
+#lzz_cpp.output  = lzz/${QMAKE_FILE_BASE}.cpp
+#lzz_cpp.commands = lzz ${_PRO_FILE_PWD_}/${QMAKE_FILE_NAME}
+#lzz_cpp.dependency_type = TYPE_CPP
+#lzz_cpp.input = LZZ
+#lzz_cpp.variable_out = SOURCES
+#QMAKE_EXTRA_COMPILERS += lzz_cpp
+
+#lzz_h.output  = lzz/${QMAKE_FILE_BASE}.h
+#lzz_h.commands = lzz ${_PRO_FILE_PWD_}/${QMAKE_FILE_NAME}
+#lzz_h.dependency_type = TYPE_H
+#lzz_h.input = LZZ
+#lzz_h.variable_out = HEADERS
+#QMAKE_EXTRA_COMPILERS += lzz_h
+
+DEFINES += UNICODE _UNICODE
+
+SOURCES += main.cpp
+
 
 HEADERS += \
-        qt_main_window.h \
-    ../code/app_events.h \
-    ../code/console.h \
-    ../code/dir_data_view.h \
-    ../code/fae_lib.h \
-    ../code/fae_memory.h \
-    ../code/fae_string.h \
-    ../code/misc.h \
-    ../code/new_filesystem.h \
-    ../code/queue_display.h \
-    ../code/settings.h \
-    ../code/stdafx.h
+    fae_lib.h \
+    fae_memory.h \
+    fae_string.h \
+    settings.h \
+    external_includes.h \
+    filesystem.h \
+    console.h \
+    main_window.h
 
 FORMS += \
-        qt_main_window.ui
+    main_window.ui

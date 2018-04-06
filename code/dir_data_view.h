@@ -76,20 +76,20 @@ struct Fs_node
 		this->type = get_node_type(path);
 		// if (type == Node_Type::nt_normal_directory) con << "calculating size for " << path << endl;
 
-		this->size = Node_size(node_size_state::waiting_processing, 0);
+		this->size = Node_size(Node_size_state::waiting_processing, 0);
 
 		if (this->type != Node_type::normal_directory)
 		{
 			auto val = get_size(path);
 			this->size.val = val;
-			this->size.state = node_size_state::processing_complete;
+			this->size.state = Node_size_state::processing_complete;
 		}
 		else
 		{
 			{
 				auto val = wxInvalidSize;
 				size.val = val;
-				size.state = node_size_state::waiting_processing;
+				size.state = Node_size_state::waiting_processing;
 			}
 			{
 				locker enter(nodes_to_calc_size_cs);
@@ -141,14 +141,14 @@ struct Fs_node
 				size_changed = true;
 			}
 			this->size.val = val;
-			this->size.state = node_size_state::processing_complete;
+			this->size.state = Node_size_state::processing_complete;
 		}
 		else
 		{
 			{
 				auto val = wxInvalidSize;
 				size.val = val;
-				size.state = node_size_state::waiting_processing;
+				size.state = Node_size_state::waiting_processing;
 			}
 			{
 				locker enter(nodes_to_calc_size_cs);
@@ -343,13 +343,13 @@ struct Fs_thread : public wxThread
 		if (!exists(type))
 		{
 			//con << "Error getting size for: " << path << endl;
-			return Node_size(node_size_state::unable_to_access_all_files, 0);
+			return Node_size(Node_size_state::unable_to_access_all_files, 0);
 		}
 
 		switch (type)
 		{
 		case Node_type::symlink_file:
-			return Node_size(node_size_state::processing_complete, 0);
+			return Node_size(Node_size_state::processing_complete, 0);
 
 		case Node_type::normal_file:
 		{
@@ -361,24 +361,24 @@ struct Fs_thread : public wxThread
 		}
 
 		case Node_type::symlink_directory:
-			return Node_size(node_size_state::processing_complete, 0);
+			return Node_size(Node_size_state::processing_complete, 0);
 
 		case Node_type::normal_directory:
 		{
 			if (dir_is_inaccessible(path))
-				return Node_size(node_size_state::unable_to_access_all_files, 0);
+				return Node_size(Node_size_state::unable_to_access_all_files, 0);
 
-			Node_size dir_size(node_size_state::processing, 0);
+			Node_size dir_size(Node_size_state::processing, 0);
 			wxDir dir(path);
 
 			if (!dir.IsOpened())
 			{
 				//cerr << "Failed to open dir" << endl;
-				return Node_size(node_size_state::unable_to_access_all_files, 0);
+				return Node_size(Node_size_state::unable_to_access_all_files, 0);
 			}
 
 			if (TestDestroy())
-				return Node_size(node_size_state::unable_to_access_all_files, wxInvalidSize);
+				return Node_size(Node_size_state::unable_to_access_all_files, wxInvalidSize);
 			const wxString basepath = dir.GetNameWithSep();
 
 			wxString filename;
@@ -386,10 +386,10 @@ struct Fs_thread : public wxThread
 			while (has_file)
 			{
 				if (TestDestroy())
-					return Node_size(node_size_state::unable_to_access_all_files, wxInvalidSize);
+					return Node_size(Node_size_state::unable_to_access_all_files, wxInvalidSize);
 				auto sub_size = get_size(basepath + filename);
-				if (sub_size.state == node_size_state::unable_to_access_all_files)
-					dir_size.state = node_size_state::unable_to_access_all_files;
+				if (sub_size.state == Node_size_state::unable_to_access_all_files)
+					dir_size.state = Node_size_state::unable_to_access_all_files;
 				auto subval = sub_size.val;
 				if (subval != wxInvalidSize)
 					dir_size.val += subval;
@@ -417,7 +417,7 @@ struct Fs_thread : public wxThread
 		}
 		}
 		//con << "ERROR: This should be unreachable." << endl;
-		return Node_size(node_size_state::unable_to_access_all_files, 0);
+		return Node_size(Node_size_state::unable_to_access_all_files, 0);
 	}
 
 	wxThread::ExitCode Entry() override
@@ -455,10 +455,10 @@ struct Fs_thread : public wxThread
 			// set the new size
 			locker enter(node->lock);
 			node->size.val = size.val;
-			if (size.state == node_size_state::unable_to_access_all_files)
+			if (size.state == Node_size_state::unable_to_access_all_files)
 				node->size.state = size.state;
 			else
-				node->size.state = node_size_state::processing_complete;
+				node->size.state = Node_size_state::processing_complete;
 		}
 		if (TestDestroy()) 
 			return (wxThread::ExitCode)-1;
@@ -633,7 +633,7 @@ struct Fs_model : public wxDataViewModel
 		//   possibly race with the thread to set the state
 		{
 			locker enter(node->lock);
-			node->size.state = node_size_state::processing;
+			node->size.state = Node_size_state::processing;
 		}
 		ItemChanged(wxDataViewItem(node));
 
@@ -696,7 +696,7 @@ struct Fs_model : public wxDataViewModel
 
 	bool is_size_valid(Node_size& size)
 	{
-		if (size.state != node_size_state::processing_complete)
+		if (size.state != Node_size_state::processing_complete)
 			return false;
 		if (size.val == wxInvalidSize)
 			return false;
@@ -1039,12 +1039,12 @@ struct Fs_model : public wxDataViewModel
 		{
 			switch (node->size.state)
 			{
-			case node_size_state::processing:
+			case Node_size_state::processing:
 			{
 				variant = wxString("Processing.");
 			} break;
 
-			case node_size_state::processing_complete:
+			case Node_size_state::processing_complete:
 			{
 				if (node->size.val == 0)
 					variant = wxString("0 B");
@@ -1052,7 +1052,7 @@ struct Fs_model : public wxDataViewModel
 					variant = wxFileName::GetHumanReadableSize(node->size.val);
 			} break;
 
-			case node_size_state::unable_to_access_all_files:
+			case Node_size_state::unable_to_access_all_files:
 			{
 				if (node->size.val == 0)
 					variant = wxString("0 B*");
@@ -1060,7 +1060,7 @@ struct Fs_model : public wxDataViewModel
 					variant = wxFileName::GetHumanReadableSize(node->size.val) + wxString("*");
 			} break;
 
-			case node_size_state::waiting_processing:
+			case Node_size_state::waiting_processing:
 			{
 				variant = wxString("Waiting For Processing.");
 			} break;
